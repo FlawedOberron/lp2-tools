@@ -1,0 +1,16 @@
+# Capcom's files and anything derived from them stay local
+unpack/
+ghidra/*
+!ghidra/scripts/
+arc-index.tsv
+index-err.txt
+*.rModel
+*.arc
+*.dds
+*.exe
+
+# generated / local
+__pycache__/
+*.pyc
+*.bak*
+*.log
