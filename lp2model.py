@@ -26,7 +26,10 @@ import math, struct
 
 FMT_SKIN = 0x14D40019    # 28 bytes: pos i16x3, w0 i16, normal u8x4, tangent u8x4, idx u8x4, uv f16x2, w1 w2 f16
 FMT_SHADOW = 0x0CB6800E  # 20 bytes: pos i16x3, 0, idx u8x4, weights u8x4, normal u8x4 (untextured material)
-STRIDE = {FMT_SKIN: 28, FMT_SHADOW: 20}
+# 24 bytes, two bones: pos i16x3, w0 i16, normal u8x4, tangent u8x4, uv f16x2, bone idx f16 x2
+# (w1 = 1 - w0). The 29xx backpack's materials only exist in these (two hashes, same layout).
+FMT_SKIN2 = (0xC31F2014, 0x6A2E1016)
+STRIDE = {FMT_SKIN: 28, FMT_SHADOW: 20, FMT_SKIN2[0]: 24, FMT_SKIN2[1]: 24}
 LOD_ALL = 0xFF
 MAX_RUN_VERTS = 0xFFFF
 MIN_WEIGHT = 0.002       # smaller influences are dropped (quantisation noise, stray paint)
@@ -85,16 +88,22 @@ def read_template(b):
     for bn in bones:  # some bones carry rotations (j100, chain roots), so full matrices
         bn["wm"] = bn["local"] if bn["parent"] == 255 else mmul(bn["local"], bones[bn["parent"]]["wm"])
         bn["world"] = tuple(bn["wm"][12:15])
-    render = {}
+    render, by_mat = {}, {}
     for k in range(nm):
         e = o_mesh + k * 48
         fmt = struct.unpack_from("<I", b, e + 0x14)[0]
         render.setdefault(fmt, b[e + 8:e + 12])
+        if fmt != FMT_SHADOW:
+            mat = (struct.unpack_from("<I", b, e + 4)[0] >> 12) & 0xFFF
+            by_mat.setdefault(mat, {}).setdefault(fmt, 0)
+            by_mat[mat][fmt] += 1
+    # each material's vertex format in the template (its shader expects that layout)
+    mat_fmt = {mat: max(c, key=c.get) for mat, c in by_mat.items()}
     mats = []
     for i in range(nmat):
         raw = b[o_tex + ntex * 64 + i * 160:][:160]
         mats.append(dict(raw=raw, slots=struct.unpack_from("<3I", raw, 12)))
-    return dict(version=struct.unpack_from("<H", b, 4)[0], bones=bones, render=render, mats=mats,
+    return dict(version=struct.unpack_from("<H", b, 4)[0], bones=bones, render=render, mats=mats, mat_fmt=mat_fmt,
                 tex_block=b[o_tex:o_tex + ntex * 64], ntex=ntex, mat_block=b[o_tex + ntex * 64:o_mesh],
                 lod_block=b[0x70:0x80])
 
@@ -146,6 +155,25 @@ def encode_skin_vertex(q, n, t, uv, ws):
                        _u8n(t[0]), _u8n(t[1]), _u8n(t[2]), 0xFF if t[3] >= 0 else 0x00,
                        ws[0][0], ws[1][0], ws[2][0], ws[3][0],
                        uv[0], 1.0 - uv[1], w1, w2)
+
+
+def _top2(ws):
+    """The two strongest weights, renormalised, padded back to four entries (w1 = 1 - w0 in the
+    two-bone formats; the padding keeps shadow copies and bounds code working)."""
+    top = sorted(ws, key=lambda e: -e[1])[:2]
+    total = sum(w for _, w in top) or 1.0
+    top = [(j, w / total) for j, w in top]
+    while len(top) < 2:
+        top.append((top[0][0] if top else 0, 0.0))
+    w0 = _q16(top[0][1]) / 32767.0
+    return [(top[0][0], w0), (top[1][0], 1.0 - w0), (0, 0.0), (0, 0.0)]
+
+
+def encode_skin2_vertex(q, n, t, uv, ws):
+    return struct.pack("<3hh4B4B2e2e", q[0], q[1], q[2], _q16(ws[0][1]),
+                       _u8n(n[0]), _u8n(n[1]), _u8n(n[2]), 0x7F,
+                       _u8n(t[0]), _u8n(t[1]), _u8n(t[2]), 0xFF if t[3] >= 0 else 0x00,
+                       uv[0], 1.0 - uv[1], float(ws[0][0]), float(ws[1][0]))
 
 
 def encode_shadow_vertex(q, n, ws):
@@ -206,7 +234,12 @@ def build_model(tpl, custom_bones, meshes, shadow=True):
             except KeyError as e:
                 raise ExportError(f"weight on joint {e.args[0]} that this part's skeleton lacks")
             verts.append((v, ws))
-        work.append(dict(fmt=FMT_SKIN, group=m["group"], mat=m["mat"], lod=m.get("lodmask", LOD_ALL),
+        fmt = tpl.get("mat_fmt", {}).get(m["mat"], FMT_SKIN)
+        if fmt in FMT_SKIN2:
+            verts = [(v, _top2(ws)) for v, ws in verts]
+        else:
+            fmt = FMT_SKIN  # 14d40019, or bde5301a (same layout) where a material uses both
+        work.append(dict(fmt=fmt, group=m["group"], mat=m["mat"], lod=m.get("lodmask", LOD_ALL),
                          verts=verts, tris=m["tris"]))
     if shadow_mat is not None:
         for m in list(work):
@@ -237,6 +270,8 @@ def build_model(tpl, custom_bones, meshes, shadow=True):
             q = quant(v["pos"])
             if m["fmt"] == FMT_SKIN:
                 vb += encode_skin_vertex(q, v["normal"], v["tangent"], v["uv"], ws)
+            elif m["fmt"] in FMT_SKIN2:
+                vb += encode_skin2_vertex(q, v["normal"], v["tangent"], v["uv"], ws)
             else:
                 vb += encode_shadow_vertex(q, v["normal"], ws)
         r[1] += n
