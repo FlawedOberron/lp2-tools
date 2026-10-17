@@ -152,7 +152,7 @@ def encode_skin_vertex(q, n, t, uv, ws):
     w2 = struct.unpack("<e", struct.pack("<e", ws[2][1]))[0]
     return struct.pack("<3hh4B4B4B2e2e", q[0], q[1], q[2], w0,
                        _u8n(n[0]), _u8n(n[1]), _u8n(n[2]), 0x7F,
-                       _u8n(t[0]), _u8n(t[1]), _u8n(t[2]), 0xFF if t[3] >= 0 else 0x00,
+                       _u8n(t[0]), _u8n(t[1]), _u8n(t[2]), 0xFF,  # stock models always 0xFF: the game scales by it
                        ws[0][0], ws[1][0], ws[2][0], ws[3][0],
                        uv[0], 1.0 - uv[1], w1, w2)
 
@@ -172,7 +172,7 @@ def _top2(ws):
 def encode_skin2_vertex(q, n, t, uv, ws):
     return struct.pack("<3hh4B4B2e2e", q[0], q[1], q[2], _q16(ws[0][1]),
                        _u8n(n[0]), _u8n(n[1]), _u8n(n[2]), 0x7F,
-                       _u8n(t[0]), _u8n(t[1]), _u8n(t[2]), 0xFF if t[3] >= 0 else 0x00,
+                       _u8n(t[0]), _u8n(t[1]), _u8n(t[2]), 0xFF,  # stock models always 0xFF: the game scales by it
                        uv[0], 1.0 - uv[1], float(ws[0][0]), float(ws[1][0]))
 
 
