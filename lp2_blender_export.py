@@ -347,6 +347,11 @@ def export_part(root, prefix, col, outdir, shadow=True):
             # one mesh (or several, see split_pieces) per material slot in use
             for slot in sorted(set(tri_slots)):
                 mat = slot_material(o, slot, tpl)
+                if tpl["mats"][mat]["slots"] == (0, 0, 0):
+                    # the untextured (shadow) material: shadow copies are generated below, and
+                    # drawn as normal meshes these show black (imported shadow meshes)
+                    warnings.append(f"{o.name}: faces on the untextured shadow material {mat} skipped")
+                    continue
                 sv, st = subset(verts, [t for t, ts in zip(tris, tri_slots) if ts == slot])
                 for pv, pt in split_pieces(sv, st):
                     meshes.append(dict(group=group, mat=mat, lodmask=L.LOD_ALL, verts=pv, tris=pt, name=o.name))

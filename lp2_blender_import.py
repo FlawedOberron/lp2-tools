@@ -140,6 +140,10 @@ def import_model(path, arm):
     for i, m in enumerate(mats):
         m["lp2_mat"] = i  # the exporter writes meshes back with this template material
     for k, m in enumerate(Mdl["meshes"]):
+        # shadow meshes (on the untextured material, e.g. format 0cb6800e / db7da00d): the
+        # exporter makes its own shadow copies, and re-exported as normal meshes they draw black
+        if m["mat"] < len(Mdl["mats"]) and tuple(Mdl["mats"][m["mat"]]) == (0, 0, 0):
+            continue
         g = M.mesh_geometry(b, m, Mdl)
         if g is None:
             continue
