@@ -32,9 +32,28 @@ maps work between players.
    generator builds today, renamed to that path).
 5. **Fallback.** A player whose set is missing locally renders the template's stock part.
 
+### RE findings (2026-10-17, DX11)
+- **FUN_00f664b0** `thiscall(parts, char* out, int kind, uint cat)`: builds a resource path with
+  sprintf. `parts` = a character's parts object: per category `cat` 0-3 (4 = an om7118 prop) the
+  bytes at +0x44+cat*4 = set, +0x45 = colour (0-3 -> 'A'+c), +0x46 = variant; +4 = the
+  character's unit (byte +0x1f = unit category), +10 a flag. `kind`: 0 model, 1 colour texture
+  (`_BM-00_<c>`), 2 sound, 3 effect provider, 4/5 extra models. Formats:
+  normal `model\hm\hm%02x\%s%02x%02x\%s%02x%02x` (+ `_BM-00_%c`); DLC (set & 0xdf == 0x0e)
+  `model\hm\hmf6\%sf6%02x\...` always colour A; set 0x2c -> hmf4/5/7 specials, 0x2d -> hmff;
+  FUN_00f5e4e0(cat) true -> hmf2 placeholder ("none").
+- **FUN_00f66c30** (only caller): 64-byte buffer, then the resource manager
+  `(*(*0x18d0ccc) + 0x2c)(type, path, 1)` with type rModel 0x18e16d0, rTexture 0x18e16b0, sounds
+  0x18c7cd0, effect providers 0x18c6dd0. MT loads a resource as a loose file under nativePC\ when
+  no archive has it (already used for map boot files), so **the carrier can return any path (< 64
+  chars) and serve loose files from ModCache via the overlay**: no DLC packages, no slot limit, no
+  same-length renames (texture names in a model sit in fixed 64-byte records).
+- The parts object knows its character (+4), so per-player choices (local side table now, synced
+  member data later) can decide the path.
+
 ### Reverse engineering needed
-- FUN_00f664b0: arguments (does it see which player/character it builds for?), path formats and
-  which name lengths are fixed; how the resource cache keys entries.
+- ~~FUN_00f664b0 arguments and path formats~~ (done, above). Still: how the resource cache keys
+  entries (path + type, presumably), and where the parts object's bytes are filled from (menu /
+  save loadout / network member data).
 - Parts menu (DX9 FUN_00ed4ca0, DX11 equivalent): list building, L/R handling, the name and colour
   swatch drawing (Flash calls, like the key config menu).
 - Where a character's part ids and colours live at runtime and in the save (s1 loadouts) and how
