@@ -244,29 +244,45 @@ Notes:
 - Player-selectable colours (all four in the menu, like stock parts) need the part to be served
   outside the DLC slots; planned with the "carrier" system.
 
-### Textures (planned, not built yet)
+### Custom textures (works now)
 
-How the game does it (e.g. bd2900):
+A part can wear its own textures instead of the template's. Add **Image Texture** nodes to the
+part's materials (any material of the part) with images named by role:
+
+| Image name ends in | Role | Notes |
+|---|---|---|
+| `_A` (`_B`, `_C`, `_D`) | colour map | the four colour variants; the set wears the one `lpc.json "colour"` picks (else `_A`) |
+| `_NM` | normal map | ordinary tangent-space normal map (Blender / OpenGL style, Y up); the exporter converts it to the game's layout |
+| `_MM` | shininess mask | greyscale: white shiny, black matt (see below) |
+
+E.g. `scav_body_A.png`, `scav_body_NM.png`. The exporter encodes them (DXT, with mipmaps) as
+`<part>_<role>.rTexture` next to the models and lists them in `lpc.json`. Anything you don't
+provide stays the template's.
+
+- **Size:** powers of two; stock parts use 512 x 512 for colour and normal maps (bigger costs
+  memory and download size, see §10). Other sizes are scaled up to the next power of two.
+- **UVs:** the template's layout is the safe start: paint over the template's texture
+  (extracted under `lp2-assets/raw/...`), keeping its islands, especially when you keep template
+  geometry. New geometry can use free areas of the sheet.
+- **Skin:** keep skin areas consistent between `_A`.. `_D` (stock parts only recolour cloth).
+- **Shininess (`_MM`):** the game's specular mask, greyscale. Most stock parts use one flat grey
+  (uniform shine); a few paint it: set 29's face (skin shine), bd2000's chain links (bright on matt
+  cloth), some visors and metal. Mid grey (about 100/255) matches the stock look.
+- **Glow** is not a texture: it comes from the material (§8b).
+- One file by hand: `lp2tex.py IN.png OUT.rTexture --kind bm|nm|mm`.
+
+Planned: a skin-tone tool (a skin mask plus HSV sliders that generates the `_A`..`_D` variants
+with skin and cloth recoloured separately), and the four colours selectable in game (needs the
+"carrier" system; generated DLC parts can only show one).
+
+### How the game stores it (reference)
 
 | Archive | Contents |
 |---|---|
 | `bd2900.arc` | model, normal map `NM-00`, mask map `MM-00`, effects, sounds |
 | `bd290000.arc` … `bd290003.arc` | one colour map each: `BM-00_A` … `_D` |
 
-A skin is just another colour map; the shape, normal map and mask are shared. Up to 4 per part.
-
-Planned authoring:
-- **Colour map:** connect it in the material as usual, named `<name>_A.png`. Extra skins go next
-  to it as `<name>_B.png`, `_C`, `_D`; the exporter picks up whichever exist.
-- **Normal map:** `<name>_NM.png`. **Mask (optional):** `<name>_MM.png`. Both are shared by all skins.
-- **Skin-tone mask (later):** `<part>_SKIN.png`, greyscale, white = skin. Used to generate
-  tinted colour variants.
-- **Reusing a game texture:** point the material at an extracted game texture under
-  `lp2-assets/raw/…` (e.g. `raw/CustomParts/bd2900/model/hm/hm29/bd2900/bd2900_NM-00.dds`). The
-  exporter writes the game's path into the model and ships nothing for it.
-
-To be confirmed in-game first: whether a part can load a texture that lives in another part's
-archive (if not, the DLL serves it), and how the variant letter is picked.
+Formats: colour DXT1 (19), normal map DXT5 with X in alpha and Y in green (31), mask DXT1 (25).
 
 ## 10. Size budget: everything must be sendable
 
