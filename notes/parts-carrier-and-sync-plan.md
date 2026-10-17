@@ -57,6 +57,11 @@ Everyone in a match needs (a) the same content and (b) the same meaning for ever
 Today: parts use deterministic slot order but differ if players' Parts folders differ; maps need
 the same Maps\ zip.
 
+### Where it lives (user decision 2026-10-17)
+The transport is **core xlive.dll**, not a plugin: maps and parts both use it, and joining a match
+depends on it. Plugin mods (Controls, SkipSplash, DevTools, future DLL mods) are client-side: they
+are never synced, advertised or sent over the network, and a match never requires them.
+
 ### Design
 1. **Identify content by hash.** Every set / map package gets a content hash (of its zip or its
    files). The loader caches by hash in `ModCache\content\<hash>\`.
