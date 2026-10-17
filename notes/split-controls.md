@@ -81,3 +81,16 @@ does not cover VSs. VS-side zoom input looks like the helper at DX11 0xf7d220 (e
 helper: +0x4 state, +0x6 player, +0x8 pad, +0xc timer; checks pressed 0x100000 then held
 with a timer). Sibling helper FUN_00f7d670 reads w2 0x400000 (secondary). Next: find
 who calls these helpers (vtables) and the VS zoom state field.
+
+## 2026-10-17 menu RE (DX11)
+- Screen states (+0x190): 1 page select (FUN_00f06540; +0x194 page 0 "Controls" / 1 "Shortcuts", labels MsgPC 71/73),
+  2 Controls list (FUN_00f074b0 -> FUN_00f06f30 input), 3 Shortcuts list (FUN_00f07540), 4/5 key capture
+  (FUN_00f06940 / FUN_00f06e70 -> FUN_00f05880), 6 numeric row edit (FUN_00f069f0; rows with slot 0x2e/0x2f).
+- FUN_00f06f30: count 0x23 (state 2) / 9 (state 3); cursor +0x198, visible offset +0x19c (0..7); input
+  *(0x18e0860)+800 bits 1 enter / 2 back / 4 default, +0x330 bits 0x40 up / 0x80 down; Enter -> FUN_00f06480(4|5).
+- Row draw = ActionScript calls with plain strings: _root.mc_main.setList(row,label,1) FUN_00f04d90,
+  setListData(row,text,flag) FUN_00f04e10, setArrowState FUN_00f04f40; selectList / setCursor(+0x19c);
+  hint _root.mc_CINESCO.cinescoMsg. -> header rows need no Flash edits.
+- Leaving page select copies screen+0x1e0 (45 u32) to options(*0x1852238)+0x68..0x11c.
+- Flying VS: ascend = change weapon bit w1 0x8 (wheel = 1-frame pulses, can't hold), descend guess w2 0x40000.
+  In a VS the grenade button gives w1 0x1 = get out. Fly types seen: 0xda (confirmed), 0xa8.
