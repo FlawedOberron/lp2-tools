@@ -28,6 +28,7 @@ from mathutils import Vector
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import lp2model as L  # noqa: E402
+import lp2tex  # noqa: E402
 
 SLOTS = {"body": "bd", "head": "hd", "back": "bk", "legs": "lg"}
 RAW = os.path.expanduser("~/Projects/lp2-assets/raw/CustomParts")
@@ -380,6 +381,69 @@ def export_part(root, prefix, col, outdir, shadow=True):
     return rep
 
 
+# ---------------------------------------------------------------- textures
+
+TEX_ROLE_RE = re.compile(r"_(A|B|C|D|NM|MM)$", re.I)
+
+
+def part_textures(col, setdir, slot, warnings):
+    """Custom textures of a part: image textures in its materials named <anything>_A.._D (colour
+    maps), _NM (normal map) or _MM (shininess mask), encoded to .rTexture next to the models.
+    Game textures loaded by the importer (from the extracted raw/ folder) are the template's own
+    and are left out. -> {"BM_A": file, "NM": file, ...}"""
+    import numpy as np
+    found = {}
+    for o in col.all_objects:
+        if o.type != "MESH" or o.hide_render:
+            continue
+        for ms in o.material_slots:
+            mat = ms.material
+            if mat is None or not mat.use_nodes or mat.node_tree is None:
+                continue
+            for node in mat.node_tree.nodes:
+                img = getattr(node, "image", None) if node.type == "TEX_IMAGE" else None
+                if img is None:
+                    continue
+                path = bpy.path.abspath(img.filepath) if img.filepath else ""
+                if path.startswith(RAW) or "-00" in img.name:
+                    continue  # the template's own texture
+                stem = os.path.splitext(img.name)[0]
+                m = TEX_ROLE_RE.search(stem) or TEX_ROLE_RE.search(os.path.splitext(os.path.basename(path))[0])
+                if not m:
+                    continue
+                r = m.group(1).upper()
+                role = "BM_" + r if r in "ABCD" else r
+                if role in found and found[role] is not img:
+                    warnings.append(f"{slot}: more than one {role} image ({found[role].name}, {img.name}); using {found[role].name}")
+                    continue
+                found[role] = img
+    out = {}
+    for role, img in sorted(found.items()):
+        w, h = img.size
+        if not w or not h:
+            warnings.append(f"{slot}: {img.name} has no pixels (not found?), skipped")
+            continue
+        src = img
+        if w & (w - 1) or h & (h - 1):
+            nw, nh = 1 << (w - 1).bit_length(), 1 << (h - 1).bit_length()
+            warnings.append(f"{slot}: {img.name} is {w}x{h}, scaled to {nw}x{nh} (use powers of two)")
+            src = img.copy()
+            src.scale(nw, nh)
+            w, h = nw, nh
+        px = np.array(src.pixels[:], dtype=np.float32).reshape(h, w, 4)[::-1]  # Blender stores bottom-up
+        rgba = np.clip(np.round(px * 255), 0, 255).astype(np.uint8)
+        kind = "nm" if role == "NM" else "mm" if role == "MM" else "bm"
+        data = lp2tex.encode(rgba, kind, mips=min(5, max(1, min(w, h).bit_length() - 2)))
+        name = f"{slot}_{role}.rTexture"
+        os.makedirs(setdir, exist_ok=True)
+        with open(os.path.join(setdir, name), "wb") as f:
+            f.write(data)
+        out[role] = name
+        if src is not img:
+            bpy.data.images.remove(src)
+    return out
+
+
 def export_sets(outdir, names=None):
     sets = find_sets(names)
     if not sets:
@@ -407,11 +471,16 @@ def export_sets(outdir, names=None):
             exported.setdefault(rep["armature"].name, set()).update(rep["custom"])
             meta["parts"][slot] = dict(file=os.path.basename(rep["path"]), template=os.path.basename(rep["template"]),
                                        custom_joints=rep["custom"])
+            tex = part_textures(col, setdir, slot, rep["warnings"])
+            if tex:
+                meta["parts"][slot]["textures"] = tex
             lines.append(f"  {slot}: {rep['vertices']} verts, {rep['triangles']} tris, {rep['meshes']} pieces "
                          f"(incl. shadow), {rep['bones']} bones ({rep['custom_bones']} custom), "
                          f"{rep['bytes'] // 1024} KB -> {rep['path']}")
             if rep["custom"]:
                 lines.append("    custom joint ids: " + ", ".join(f"{n}={j}" for n, j in rep["custom"].items()))
+            if tex:
+                lines.append("    textures: " + ", ".join(f"{r}={f}" for r, f in tex.items()))
             for w in rep["warnings"]:
                 lines.append("    WARNING: " + w)
         with open(os.path.join(setdir, "lpc.json"), "w") as f:
