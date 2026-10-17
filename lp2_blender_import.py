@@ -137,6 +137,8 @@ def import_model(path, arm):
     part = os.path.splitext(os.path.basename(path))[0]
     cols = {lvl: lod_part_collection(lvl, part) for lvl in LOD_LEVELS}
     mats = [make_material(f"{part}_mat{i:03d}", resolve_tex(path, Mdl, s[0])) for i, s in enumerate(Mdl["mats"])]
+    for i, m in enumerate(mats):
+        m["lp2_mat"] = i  # the exporter writes meshes back with this template material
     for k, m in enumerate(Mdl["meshes"]):
         g = M.mesh_geometry(b, m, Mdl)
         if g is None:

@@ -17,8 +17,9 @@
 # custom: each chain must hang off a joint the part already has; only bones carrying weight
 # (and the links between them and the skeleton) are exported; ids are assigned once and
 # stored on the bone as "lp2_joint". Only the high detail level is authored: every mesh is
-# exported for all distances and gets a shadow copy. Materials: object or material custom
-# property "lp2_mat" (template material index), else the template's first textured material.
+# exported for all distances and gets a shadow copy. Materials, per material slot: the material's
+# (or object's) custom property "lp2_mat" (template material index), else the importer's
+# <part>_matNNN name, else the template's first textured material.
 # The template (standard skeleton, materials, textures) is the part's original rModel:
 # custom property "lp2_template" on the part or LPC collection, else the lp2_source of an
 # imported object of that slot, else the 29xx (Femmes Fatales) part.
@@ -140,21 +141,43 @@ def object_group(obj, centre_x, warn):
     return int(m.group(1)) if m else 0
 
 
-def object_material(obj, tpl):
-    for src in (obj, obj.active_material):
+MAT_NAME_RE = re.compile(r"_mat(\d+)(?:\.\d+)?$")  # the importer's names: body_mat003(.001)
+
+
+def slot_material(obj, slot, tpl):
+    """Template material index for one material slot of obj: the material's (or object's)
+    "lp2_mat" property, else the importer's <part>_matNNN name, else the template's first
+    textured material."""
+    mat = obj.material_slots[slot].material if slot < len(obj.material_slots) else None
+    for src in (mat, obj):
         if src is not None and "lp2_mat" in src:
             i = int(src["lp2_mat"])
             if not 0 <= i < len(tpl["mats"]):
                 raise L.ExportError(f"{obj.name}: lp2_mat {i} out of range (template has {len(tpl['mats'])})")
             return i
-    for i, m in enumerate(tpl["mats"]):
-        if m["slots"] != (0, 0, 0):
+    m = MAT_NAME_RE.search(mat.name) if mat is not None else None
+    if m and int(m.group(1)) < len(tpl["mats"]):
+        return int(m.group(1))
+    for i, tm in enumerate(tpl["mats"]):
+        if tm["slots"] != (0, 0, 0):
             return i
     return 0
 
 
+def subset(verts, tris):
+    """The vertices the given triangles use, with the triangles renumbered."""
+    remap, out = {}, []
+    for t in tris:
+        for i in t:
+            if i not in remap:
+                remap[i] = len(out)
+                out.append(verts[i])
+    return out, [tuple(remap[i] for i in t) for t in tris]
+
+
 def mesh_data(obj, joint_of_group):
-    """-> (verts, tris) in LP2 space; verts split where normals/UVs/tangent sign differ."""
+    """-> (verts, tris, tri_slots) in LP2 space; verts split where normals/UVs/tangent sign
+    differ; tri_slots = each triangle's material slot."""
     dg = bpy.context.evaluated_depsgraph_get()
     ev = obj.evaluated_get(dg)
     src = ev.to_mesh()
@@ -175,7 +198,7 @@ def mesh_data(obj, joint_of_group):
         normals = me.corner_normals if hasattr(me, "corner_normals") else None
         mw = obj.matrix_world
         nmat = mw.to_3x3().inverted().transposed()
-        verts, key_index, tris = [], {}, []
+        verts, key_index, tris, tri_slots = [], {}, [], []
         weights_cache = {}
         for poly in me.polygons:
             tri = []
@@ -208,7 +231,8 @@ def mesh_data(obj, joint_of_group):
                                       tangent=dir_to_lp2(t) + (sign,), uv=uv, weights=weights_cache[vi]))
                 tri.append(k)
             tris.append(tuple(tri))
-        return verts, tris
+            tri_slots.append(poly.material_index)
+        return verts, tris, tri_slots
     finally:
         bpy.data.meshes.remove(me)
 
@@ -312,7 +336,7 @@ def export_part(root, prefix, col, outdir, shadow=True):
                     jog[g.index] = int(m.group(1))  # joints this part lacks are rejected below
                 elif g.name in arm.data.bones:
                     jog[g.index] = g.name  # custom bone; id decided once weights are known
-            verts, tris = mesh_data(o, jog)
+            verts, tris, tri_slots = mesh_data(o, jog)
             stray = sorted({j for v in verts for j, w in v["weights"] if w > L.MIN_WEIGHT
                             and isinstance(j, int) and j not in std})
             if stray:
@@ -320,9 +344,12 @@ def export_part(root, prefix, col, outdir, shadow=True):
                                     f"which the {col.name} part doesn't have")
             cx = sum(v["pos"][0] for v in verts) / max(1, len(verts))
             group = object_group(o, cx, warnings)
-            mat = object_material(o, tpl)
-            for pv, pt in split_pieces(verts, tris):
-                meshes.append(dict(group=group, mat=mat, lodmask=L.LOD_ALL, verts=pv, tris=pt, name=o.name))
+            # one mesh (or several, see split_pieces) per material slot in use
+            for slot in sorted(set(tri_slots)):
+                mat = slot_material(o, slot, tpl)
+                sv, st = subset(verts, [t for t, ts in zip(tris, tri_slots) if ts == slot])
+                for pv, pt in split_pieces(sv, st):
+                    meshes.append(dict(group=group, mat=mat, lodmask=L.LOD_ALL, verts=pv, tris=pt, name=o.name))
     finally:
         arm.data.pose_position = pose_pos
         bpy.context.view_layer.update()
