@@ -213,7 +213,38 @@ on). You can't add new materials yet; you pick which of the template's materials
   emissive / animated materials per template part is planned.
 - The shadow copies use the template's untextured material automatically; you don't assign that.
 
-## 9. Textures and skins (planned, not built yet)
+## 9. Colour variants (the four "shaders") and textures
+
+### What the four options are
+
+Every stock part has up to four **colour variants**, the A / B / C / D swatch next to the part in
+the customisation menu. They are not separate shaders: each is a **different colour map texture**
+(`<part>_BM-00_A` … `_D`) laid over the same model, normal map and mask. The artists painted the
+skin areas identically in all four and changed the cloth, which is why the clothes recolour and
+the skin stays the same.
+
+### Picking one for a custom part (works now)
+
+A custom part currently wears **one** colour: generated DLC parts always load colour A (the game
+shows "LOST PLANET 2" instead of a swatch for them). Choose which of the **template's** four colour
+maps that is in `lpc.json`:
+
+```json
+{ "id": "scav01", "name": "Scavenger", "faction": "FF", "colour": "C", "parts": { ... } }
+```
+
+`"colour"` is `"A"`–`"D"` (default `"A"`); the loader copies that variant's texture into the
+colour-A position for every part of the set. To try the looks, set it, restart the game and check
+the part in customisation; the cached package is rebuilt automatically when the setting changes.
+
+Notes:
+- The variants are the **template part's** (the stock part your set is built on, e.g. bd2900). To
+  wear another part's colours, build on that part as the template.
+- Mixing: each part of a set uses the same letter. Put parts in separate sets for different letters.
+- Player-selectable colours (all four in the menu, like stock parts) need the part to be served
+  outside the DLC slots; planned with the "carrier" system.
+
+### Textures (planned, not built yet)
 
 How the game does it (e.g. bd2900):
 
