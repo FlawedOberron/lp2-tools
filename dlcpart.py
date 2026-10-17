@@ -14,6 +14,8 @@
   Per-part overrides: --src hd2800@20=Green Helmet,hd2900@45=FF Head  (src[@item][=name])
   --tint   swap_rb (subtle) or highlight (bright green) recolours the clone's colour textures
   --colours how many colour arcs to copy (default: every <src>NN.arc that exists, 00-03)
+  --model  exported models to use instead of the clones' own: hd=PATH,bd=PATH,... (per category;
+           the .rModel the Blender exporter wrote, built on the same template part as --src)
 
 Writes OUTPKG/Content/nativePC/sname.bin and OUTPKG/Content/nativePC/arcXmlTmpPC/CustomParts/*.arc.
 The set byte the game puts into DLC part paths is 0x0e, or 0x2e when a caller ORs in 0x20 (normal
@@ -87,7 +89,7 @@ def rename_pairs(pfx, sset, var, dset, dvar):
     return [(a.encode(), b.encode()) for a, b in pairs]
 
 
-def clone_arc(src_arc, dst_arc, pairs, tint):
+def clone_arc(src_arc, dst_arc, pairs, tint, model=None, model_name=None):
     work = tempfile.mkdtemp(prefix="lp2dlc")
     try:
         sys.argv = ["arcx", "x", src_arc, os.path.join(work, "in")]
@@ -98,6 +100,8 @@ def clone_arc(src_arc, dst_arc, pairs, tint):
         for ln in lines:
             name, cls = ln.split("\t")
             data = open(os.path.join(work, "in", *name.split("\\")) + "." + cls, "rb").read()
+            if model and cls == "rModel" and name == model_name:
+                data = open(model, "rb").read()  # the exported model, renamed below like the rest
             new = name.encode("latin-1")
             for a, b in pairs:
                 new = new.replace(a, b)
@@ -122,8 +126,10 @@ def main():
     ap.add_argument("--item", type=int)
     ap.add_argument("--name", default="Mod Part")
     ap.add_argument("--tint", choices=sorted(TINTS))
+    ap.add_argument("--model", default="", help="hd=PATH,bd=PATH,... exported models")
     ap.add_argument("out")
     a = ap.parse_args()
+    a.models = dict(kv.split("=", 1) for kv in a.model.split(",") if kv)
     entries = []
     for spec in a.src.split(","):
         spec, _, name = spec.strip().partition("=")
@@ -147,7 +153,9 @@ def build_part(a, src, item, name):
     for dset in (0x0E, 0x2E):
         pairs = rename_pairs(pfx, sset, var, dset, item)
         tag = f"{pfx}{dset:02x}{item:02x}"
-        n = clone_arc(os.path.join(base, src + ".arc"), os.path.join(dst, tag + ".arc"), pairs, a.tint)
+        model_name = f"model\\hm\\hm{sset:02x}\\{pfx}{sset:02x}{var:02x}\\{pfx}{sset:02x}{var:02x}"
+        n = clone_arc(os.path.join(base, src + ".arc"), os.path.join(dst, tag + ".arc"), pairs, a.tint,
+                      a.models.get(pfx), model_name)
         print(f"{tag}.arc: {n} entries")
         for col in range(4):
             colsrc = os.path.join(base, f"{src}{col:02x}.arc")
