@@ -189,6 +189,30 @@ joints with fixed radii. For example:
 - Custom bones (hair, capes, tails) have no hitboxes.
 - Changing hitboxes means replacing the shared file for everyone, identically on all players.
 
+## 8b. Materials (including glowing and animated ones)
+
+Every mesh piece uses one **material of the template part** (the original rModel the set is built
+on). You can't add new materials yet; you pick which of the template's materials each face uses.
+
+- The importer names materials `<part>_mat000`, `<part>_mat001`, ... and tags each with the custom
+  property `lp2_mat` (its index in the template). **Keep these materials** on your new geometry.
+  Assign them per face (material slots) like any Blender material; the exporter writes one mesh per
+  material in use.
+- To use a material on new faces: add the imported material to the object's slots and assign the
+  faces. A material you made yourself is accepted if it has an `lp2_mat` custom property (template
+  material index) or a name ending in `_matNNN`.
+- Without either, the faces get the template's first textured material, which is often the
+  wrong one (on the 29xx backpack that is the **emissive** material: the part showed only its glow).
+- **Glow and animation belong to the material, not to the texture or the mesh.** Some template
+  materials are emissive (they light up), and some of those animate their glow (pulsing or
+  scrolling light strips, e.g. on the 29xx backpack). Any face you put on such a material glows and
+  animates the same way. Use this deliberately for lights and screens, and keep ordinary surfaces on
+  the plain materials.
+- To see which material is which: in the import, select a material and look at what it covers on
+  the original part (light strips, visors and screens are usually the emissive ones). A list of the
+  emissive / animated materials per template part is planned.
+- The shadow copies use the template's untextured material automatically; you don't assign that.
+
 ## 9. Textures and skins (planned, not built yet)
 
 How the game does it (e.g. bd2900):
