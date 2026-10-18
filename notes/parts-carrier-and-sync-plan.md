@@ -108,3 +108,27 @@ are never synced, advertised or sent over the network, and a match never require
 ### Order of work
 Carrier first (it removes slot numbers, which makes per-player sync simple), then sync steps 1-4.
 Contact sokie (upstream xlive-steamworks) once parts + maps load and sync (user's call).
+
+## 6. Sync groundwork: per-character carrier (RE 2026-10-18, DX11 addresses)
+Today every lookup goes by (category, alias slot): a remote player on the same faction/loadout
+alias as ours would show OUR set. The receiving side must resolve per character.
+- Archive request `FUN_007d3fd0(character, cat, code)` (via 7d41f0 / 7d4260 / 7d4350): sprintf
+  `CustomParts\<pfx>%02x%02x%02x` (colour) and `CustomParts\<pfx>%02x%02x`; DLC (f5c7f0(code)) ->
+  `7d05e0(cat, code)` (package) -> `7d3c30(character, cat<<8|variant, "arcXmlTmpPC", name, 4, 2, 2)`;
+  else `7d2700(character, "arcXmlTmpPC", name, 0, 2)`.
+- Release `FUN_007d29b0(loader, character, cat, code)`: same names from the code -> `7d18b0(name)`
+  (frees by name from a 0x60-entry table, entry 0x4c: +4 resource, +8 name[64]).
+- Loader character slots: 0-31 at loader + i*0x1ca8 (flags +0x1ca4 bit 4 = in use).
+- Path builder FUN_00f664b0: parts+4 = unit; unit+0x1f (1-8) looks like the player slot (kinds
+  4/5 test it); unit+0xcd0 some state (6 / 0 skip).
+Plan:
+1. Per-character set table: (character or player slot, category) -> set; local player from our
+   choice, remote from lobby member data, debug override from config (fake player / bots).
+2. Hook 7d3fd0 + 7d29b0 for carrier codes: name = the set's token (`CustomParts\bdzkqm`, colour
+   `bdzkqm<cc>`), remembered per (character, category) so the release frees what was requested;
+   overlay maps `...\customparts\<token>[cc].arc` to the set's build (any root).
+3. PartPath: the character's set (map parts/unit -> character; check unit+0x1f against loader slot).
+4. Debug "fake player": config {"debug_carrier": {"slot": N, "body": "spe3"}} forcing a bot's or a
+   slot's carrier set, to test without a second client. Bots wear stock codes, so forcing them also
+   needs their code swapped to a carrier code at request + path time.
+Open: what is `character` for the menu preview vs. players vs. bots; is unit+0x1f the same index.
