@@ -311,9 +311,27 @@ or the material's index from the import):
 ```
 
 Tested on bd2900's skin: **latex** = white mask, `spec_power` 24, `spec_colour` 3.5 (really
-shiny); **neoprene** = 16 % grey mask, `spec_power` 4, `spec_colour` 0.3 (really matte). The
-exporter writes `_MM_<letter>` / `_NM_<letter>` images; `material_overrides` is edited in
-`lpc.json` by hand for now. For research, a raw material word also works as a key (`"19": 0.2`:
+shiny); **neoprene** = 16 % grey mask, `spec_power` 4, `spec_colour` 0.3 (really matte).
+
+**In Blender.** The importer sets each material up like the game draws it: colour map -> Base
+Color, normal map -> Normal Map node -> Normal (the game's channel layout converted by nodes),
+shine mask -> Specular IOR Level, and **Roughness** from the material's `spec_power` (Blinn-Phong
+power p <-> roughness r: p = 2/r^4 - 2; stock 6-50 = roughness 0.71-0.44). Each material also gets
+`lp2_spec_power` / `lp2_spec_colour` custom properties holding the stock values. The exporter:
+
+| You change | Exported as |
+|---|---|
+| a material's Roughness slider (not driven by a texture) | that material's `spec_power`, every colour |
+| its custom property `lp2_spec_colour` | that material's `spec_colour`, every colour |
+| custom property `lp2_spec_power_B` / `lp2_spec_colour_B` (any letter) | `material_overrides` for that colour in `lpc.json` |
+| images ending `_MM_B` / `_NM_B` | that colour's own mask / normal map |
+
+Unchanged materials export byte-identical to the template. `spec_power` is one number per
+material (the game's shaders have no per-pixel highlight-size map; a painted Roughness texture
+is not exported); for areas that need different highlight sizes, put them on different
+materials. Blender's preview is a PBR approximation of the game's older specular lighting:
+judge shine in game. Note low roughness (high power) gives a small pinpoint highlight, which in
+LP2 reads *less* shiny unless the mask and `spec_colour` are strong. For research, a raw material word also works as a key (`"19": 0.2`:
 the float at that 4-byte index of the 160-byte material record; 19 and 16-17 are still unknown).
 
 ### How the game stores it (reference)

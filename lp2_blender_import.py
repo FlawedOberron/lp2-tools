@@ -109,17 +109,70 @@ def load_image(path):
     return bpy.data.images.load(path, check_existing=True)
 
 
-def make_material(name, diffuse):
+def power_to_roughness(power):
+    """Blinn-Phong specular power -> Principled roughness (GGX alpha = roughness^2, power = 2/alpha^2 - 2)."""
+    return (2.0 / (max(power, 0.0) + 2.0)) ** 0.25
+
+
+def make_material(name, diffuse, normal=None, mask=None, spec_power=None, spec_colour=None):
+    """Principled material approximating the game's: colour map -> Base Color, normal map (the
+    game's DXT5nm: X in alpha, Y in green) -> Normal Map node, shine mask -> Specular IOR Level
+    (stock grey ~0.52 ~ Blender's 0.5), spec_power -> Roughness. The stock values are kept as
+    lp2_spec_power / lp2_spec_colour properties; the exporter writes changes back."""
     mat = bpy.data.materials.get(name) or bpy.data.materials.new(name)
     mat.use_nodes = True
     nt = mat.node_tree
     bsdf = next(n for n in nt.nodes if n.type == "BSDF_PRINCIPLED")
+    if any(n.type == "TEX_IMAGE" for n in nt.nodes):
+        return mat  # already set up (re-import into the same file)
     img = load_image(diffuse)
-    if img and not any(n.type == "TEX_IMAGE" for n in nt.nodes):
+    if img:
         tex = nt.nodes.new("ShaderNodeTexImage")
         tex.image = img
+        tex.location = (-600, 300)
         nt.links.new(tex.outputs["Color"], bsdf.inputs["Base Color"])  # alpha is a mask, not opacity
+    img = load_image(normal)
+    if img:
+        img.colorspace_settings.name = "Non-Color"
+        tex = nt.nodes.new("ShaderNodeTexImage")
+        tex.image = img
+        tex.location = (-900, -300)
+        sep = nt.nodes.new("ShaderNodeSeparateColor")
+        sep.location = (-600, -250)
+        comb = nt.nodes.new("ShaderNodeCombineColor")
+        comb.location = (-400, -300)
+        comb.inputs["Blue"].default_value = 1.0
+        nmap = nt.nodes.new("ShaderNodeNormalMap")
+        nmap.location = (-200, -300)
+        nt.links.new(tex.outputs["Color"], sep.inputs["Color"])
+        nt.links.new(tex.outputs["Alpha"], comb.inputs["Red"])    # X
+        nt.links.new(sep.outputs["Green"], comb.inputs["Green"])  # Y (up, as Blender's)
+        nt.links.new(comb.outputs["Color"], nmap.inputs["Color"])
+        nt.links.new(nmap.outputs["Normal"], bsdf.inputs["Normal"])
+    img = load_image(mask)
+    if img:
+        img.colorspace_settings.name = "Non-Color"
+        tex = nt.nodes.new("ShaderNodeTexImage")
+        tex.image = img
+        tex.location = (-600, 0)
+        spec = bsdf.inputs.get("Specular IOR Level") or bsdf.inputs.get("Specular")
+        if spec is not None:
+            nt.links.new(tex.outputs["Color"], spec)
+    if spec_power is not None:
+        mat["lp2_spec_power"] = round(spec_power, 3)
+        bsdf.inputs["Roughness"].default_value = power_to_roughness(spec_power)
+    if spec_colour is not None:
+        mat["lp2_spec_colour"] = round(spec_colour, 3)
     return mat
+
+
+def material_values(b, i):
+    """(spec_power, spec_colour) of material i: words 18 and 20 of its 160-byte record."""
+    ntex = struct.unpack_from("<I", b, 0x1C)[0]
+    o = struct.unpack_from("<I", b, 0x2C)[0] + ntex * 64 + i * 160
+    if struct.unpack_from("<I", b, o)[0] & 0xFF != 0x43:
+        return None, None  # not a lit material
+    return struct.unpack_from("<f", b, o + 18 * 4)[0], struct.unpack_from("<f", b, o + 20 * 4)[0]
 
 
 def resolve_tex(src, M_, slot):
@@ -136,7 +189,8 @@ def import_model(path, arm):
     bones, _remap = M.read_bones(b)
     part = os.path.splitext(os.path.basename(path))[0]
     cols = {lvl: lod_part_collection(lvl, part) for lvl in LOD_LEVELS}
-    mats = [make_material(f"{part}_mat{i:03d}", resolve_tex(path, Mdl, s[0])) for i, s in enumerate(Mdl["mats"])]
+    mats = [make_material(f"{part}_mat{i:03d}", resolve_tex(path, Mdl, s[0]), resolve_tex(path, Mdl, s[1]), resolve_tex(path, Mdl, s[2]),
+                          *material_values(b, i)) for i, s in enumerate(Mdl["mats"])]
     for i, m in enumerate(mats):
         m["lp2_mat"] = i  # the exporter writes meshes back with this template material
     for k, m in enumerate(Mdl["meshes"]):

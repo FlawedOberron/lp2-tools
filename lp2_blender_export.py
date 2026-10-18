@@ -23,7 +23,7 @@
 # The template (standard skeleton, materials, textures) is the part's original rModel:
 # custom property "lp2_template" on the part or LPC collection, else the lp2_source of an
 # imported object of that slot, else the 29xx (Femmes Fatales) part.
-import bpy, bmesh, json, os, re, sys
+import bpy, bmesh, json, os, re, struct, sys
 from mathutils import Vector
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -304,6 +304,65 @@ def custom_bones_for(arm, tpl, used_names, set_name, warnings):
 
 # ---------------------------------------------------------------- export
 
+def roughness_to_power(r):
+    """Principled roughness -> Blinn-Phong specular power (inverse of the importer's)."""
+    r = min(max(r, 0.02), 1.0)
+    return 2.0 / r ** 4 - 2.0
+
+
+def material_settings(bm):
+    """(spec_power or None, spec_colour or None) a Blender material asks for: Roughness (when not
+    driven by a texture) -> spec_power, the "lp2_spec_colour" property -> spec_colour."""
+    power = colour = None
+    if bm.use_nodes and bm.node_tree is not None:
+        bsdf = next((n for n in bm.node_tree.nodes if n.type == "BSDF_PRINCIPLED"), None)
+        if bsdf is not None and not bsdf.inputs["Roughness"].is_linked:
+            power = roughness_to_power(bsdf.inputs["Roughness"].default_value)
+    if "lp2_spec_colour" in bm:
+        colour = float(bm["lp2_spec_colour"])
+    return power, colour
+
+
+def apply_material_settings(tpl, mat_src, warnings):
+    """Writes changed spec_power (word 18) / spec_colour (words 20-22) of each lit template
+    material into tpl["mat_block"] (all colours), and returns per-colour overrides from the
+    materials' "lp2_spec_power_<letter>" / "lp2_spec_colour_<letter>" properties
+    ({letter: {material index: {"spec_power": p, "spec_colour": c}}} for lpc.json)."""
+    block = bytearray(tpl["mat_block"])
+    overrides = {}
+    for idx, bms in sorted(mat_src.items()):
+        o = idx * 160
+        if block[o] != 0x43:
+            continue  # not a lit material
+        stock_power = struct.unpack_from("<f", block, o + 18 * 4)[0]
+        stock_colour = struct.unpack_from("<f", block, o + 20 * 4)[0]
+        firsts = {}
+        for bm in bms:
+            for key, val in zip(("spec_power", "spec_colour"), material_settings(bm)):
+                if val is None:
+                    continue
+                if key in firsts and abs(firsts[key][1] - val) > 1e-3 and firsts[key][0] is not bm:
+                    warnings.append(f"material {idx}: {firsts[key][0].name} and {bm.name} ask for different {key}; using {firsts[key][0].name}")
+                    continue
+                firsts.setdefault(key, (bm, val))
+            for letter in "ABCD":
+                for key in ("spec_power", "spec_colour"):
+                    prop = f"lp2_{key}_{letter}"
+                    if prop in bm:
+                        overrides.setdefault(letter, {}).setdefault(str(idx), {})[key] = round(float(bm[prop]), 3)
+        if "spec_power" in firsts:
+            p = firsts["spec_power"][1]
+            if abs(p - stock_power) > max(0.5, stock_power * 0.03):  # roughness round trip noise
+                struct.pack_into("<f", block, o + 18 * 4, p)
+        if "spec_colour" in firsts:
+            c = firsts["spec_colour"][1]
+            if abs(c - stock_colour) > 1e-3:
+                for w in (20, 21, 22):
+                    struct.pack_into("<f", block, o + w * 4, c)
+    tpl["mat_block"] = bytes(block)
+    return overrides
+
+
 def export_part(root, prefix, col, outdir, shadow=True):
     warnings = []
     tpath, w = template_path(root, col, prefix)
@@ -327,6 +386,7 @@ def export_part(root, prefix, col, outdir, shadow=True):
     pose_pos = arm.data.pose_position
     arm.data.pose_position = "REST"
     bpy.context.view_layer.update()
+    mat_src = {}  # template material index -> the Blender materials exported with it
     try:
         meshes = []
         for o in sorted(objs, key=lambda o: o.name):
@@ -348,6 +408,8 @@ def export_part(root, prefix, col, outdir, shadow=True):
             # one mesh (or several, see split_pieces) per material slot in use
             for slot in sorted(set(tri_slots)):
                 mat = slot_material(o, slot, tpl)
+                if slot < len(o.material_slots) and o.material_slots[slot].material is not None:
+                    mat_src.setdefault(mat, []).append(o.material_slots[slot].material)
                 if tpl["mats"][mat]["slots"] == (0, 0, 0):
                     # the untextured (shadow) material: shadow copies are generated below, and
                     # drawn as normal meshes these show black (imported shadow meshes)
@@ -369,7 +431,9 @@ def export_part(root, prefix, col, outdir, shadow=True):
             v["weights"] = [(custom_ids[j] if isinstance(j, str) else j, w) for j, w in v["weights"]
                             if not isinstance(j, str) or j in custom_ids]
 
+    overrides = apply_material_settings(tpl, mat_src, warnings)
     data, rep = L.build_model(tpl, customs, meshes, shadow=shadow)
+    rep["overrides"] = overrides
     rep["warnings"] = warnings + rep["warnings"]
     os.makedirs(outdir, exist_ok=True)
     path = os.path.join(outdir, f"{base_name(col.name).lower()}.rModel")
@@ -472,6 +536,9 @@ def export_sets(outdir, names=None):
             exported.setdefault(rep["armature"].name, set()).update(rep["custom"])
             meta["parts"][slot] = dict(file=os.path.basename(rep["path"]), template=os.path.basename(rep["template"]),
                                        custom_joints=rep["custom"])
+            if rep["overrides"]:
+                meta["parts"][slot]["material_overrides"] = rep["overrides"]
+                lines.append("    colour overrides: " + json.dumps(rep["overrides"]))
             tex = part_textures(col, setdir, slot, rep["warnings"])
             if tex:
                 meta["parts"][slot]["textures"] = tex
@@ -485,10 +552,11 @@ def export_sets(outdir, names=None):
             for w in rep["warnings"]:
                 lines.append("    WARNING: " + w)
         # menu colours: the root collection's "lpc_colours" property ("ACD"), else A plus every
-        # letter some part has its own colour map for
+        # letter some part has its own colour / mask / normal map or material overrides for
         letters = str(root.get("lpc_colours", "")).upper()
         if not letters:
-            own = {r[3] for p in meta["parts"].values() for r in p.get("textures", {}) if r.startswith("BM_") and len(r) == 4}
+            own = {r[3] for p in meta["parts"].values() for r in p.get("textures", {}) if r[:3] in ("BM_", "MM_", "NM_") and len(r) == 4}
+            own |= {c for p in meta["parts"].values() for c in p.get("material_overrides", {})}
             letters = "".join(sorted(own | {"A"}))
         meta["colours"] = "".join(c for i, c in enumerate(letters) if c in "ABCD" and c not in letters[:i]) or "A"
         lines.append(f"  colours: {meta['colours']}")
