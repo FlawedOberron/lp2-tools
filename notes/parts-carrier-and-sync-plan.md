@@ -171,6 +171,24 @@ Open: what is `character` for the menu preview vs. players vs. bots; is unit+0x1
   match -> soldier wears spe3. Logs: "member data:", "member ... choice(s)", "fake member plays
   slot", "stage request player", "unit ... slot N -> player M", "player set", "info holds our xuid".
 
+### 6d. Downloads of sets we don't have (2026-10-18, built, installed, untested, not committed)
+- Set bundle (MakeBundle): lpc.json + models + textures, flat names sorted lower-case;
+  "LPCB" u32 count, {u16 len, name, u32 size, data}; hash = FNV-1a 64 hex (PartSet.hash, logged
+  in "part set ... (<id>, <faction>, <hash>)"). Member entries are now `<id>:<hash>`.
+- Resolve (ResolveEntry): local set with that id+hash -> same hash under another id -> downloaded
+  set -> else fetch (EnsureRemote, once per hash, on member data arrival = in the lobby).
+- Downloaded sets: ModCache\parts\remote\<hash>\ (+ "verified"), built with internal id
+  `<id>-<hash8>` (own build folder + model names), own token (FreeToken), PartPackage.remote; kept in
+  g_remoteSets (deque), never in the menu; overlay token redirect searches them too. Decision
+  (user): downloaded sets stay separate; a later option/mod-manager may let users adopt them.
+- Transport: FetchBundle(member, hash): fake member -> its library; real players -> "not built
+  yet" (next: Steam P2P chunks, max 64 MB bundle).
+- Fake library: ModCache\parts\fake_library\LPC_spx5 (spe5 copy, id spx5). fake_member.txt with
+  only "slot 0" wears every library set. Test: rename fake_member.txt.off, wear a non-spe5 body,
+  training match. Expected logs: "fake member plays slot 0 (1 library set(s))", "got set <hash>",
+  "player set spx5 (<hash>) ready", then in the match "stage request player 0 body -> spx5-xxxx".
+  The download finishes during startup, so the first match should already show it.
+
 ## 7. Ideas to build later (user, 2026-10-18)
 - **Mod manager screen**: in-game (or launcher) screen listing mods (part sets, maps, plugins)
   with on/off toggles and a config editor per mod (e.g. plugin json, lpc.json colours/faction).
