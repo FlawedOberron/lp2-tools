@@ -383,12 +383,13 @@ def export_part(root, prefix, col, outdir, shadow=True):
 
 # ---------------------------------------------------------------- textures
 
-TEX_ROLE_RE = re.compile(r"_(A|B|C|D|NM|MM)$", re.I)
+TEX_ROLE_RE = re.compile(r"_((?:NM|MM)_[A-D]|A|B|C|D|NM|MM)$", re.I)
 
 
 def part_textures(col, setdir, slot, warnings):
     """Custom textures of a part: image textures in its materials named <anything>_A.._D (colour
-    maps), _NM (normal map) or _MM (shininess mask), encoded to .rTexture next to the models.
+    maps), _NM (normal map) or _MM (shininess mask), or _MM_B / _NM_C (that colour's own mask /
+    normal map, the shared one elsewhere), encoded to .rTexture next to the models.
     Game textures loaded by the importer (from the extracted raw/ folder) are the template's own
     and are left out. -> {"BM_A": file, "NM": file, ...}"""
     import numpy as np
@@ -432,7 +433,7 @@ def part_textures(col, setdir, slot, warnings):
             w, h = nw, nh
         px = np.array(src.pixels[:], dtype=np.float32).reshape(h, w, 4)[::-1]  # Blender stores bottom-up
         rgba = np.clip(np.round(px * 255), 0, 255).astype(np.uint8)
-        kind = "nm" if role == "NM" else "mm" if role == "MM" else "bm"
+        kind = "nm" if role.startswith("NM") else "mm" if role.startswith("MM") else "bm"
         data = lp2tex.encode(rgba, kind, mips=min(5, max(1, min(w, h).bit_length() - 2)))
         name = f"{slot}_{role}.rTexture"
         os.makedirs(setdir, exist_ok=True)

@@ -262,6 +262,8 @@ part's materials (any material of the part) with images named by role:
 | `_A` (`_B`, `_C`, `_D`) | colour map | the four colour variants (menu letters in `lpc.json "colours"`); a missing letter falls back to `_A` |
 | `_NM` | normal map | ordinary tangent-space normal map (Blender / OpenGL style, Y up); the exporter converts it to the game's layout |
 | `_MM` | shininess mask | greyscale: white shiny, black matt (see below) |
+| `_MM_B` (`_MM_A`.. `_MM_D`) | one colour's shininess mask | that colour wears it; the others keep `_MM` (see "Shine per colour") |
+| `_NM_B` (`_NM_A`.. `_NM_D`) | one colour's normal map | e.g. a smooth latex colour and a textured one |
 
 E.g. `scav_body_A.png`, `scav_body_NM.png`. The exporter encodes them (DXT, with mipmaps) as
 `<part>_<role>.rTexture` next to the models and lists them in `lpc.json`. Anything you don't
@@ -280,8 +282,39 @@ provide stays the template's.
 - One file by hand: `lp2tex.py IN.png OUT.rTexture --kind bm|nm|mm`.
 
 Planned: a skin-tone tool (a skin mask plus HSV sliders that generates the `_A`..`_D` variants
-with skin and cloth recoloured separately), and the four colours selectable in game (needs the
-"carrier" system; generated DLC parts can only show one).
+with skin and cloth recoloured separately).
+
+### Shine per colour (works now, confirmed in game 2026-10-18)
+
+Stock parts share one mask and one set of material values across all four colours. A custom part
+can give each colour its own: the loader builds a model copy for every colour that changes
+something and loads it with that colour. Three controls, strongest first:
+
+| Control | Where | Effect |
+|---|---|---|
+| mask map (`_MM` / `_MM_<letter>`) | texture | **specular strength** per area: white full shine, black none. Stock is about 52 % grey |
+| `spec_colour` | material | specular colour multiplier, one number or `[r, g, b]` (stock 1.0; 0 = no highlight, 3-4 = very glossy) |
+| `spec_power` | material | **highlight size**: low (4-8) broad sheen, high (50+) small pinpoint (a tiny highlight reads as *less* shiny). Stock 6-50 per material |
+
+Material values go in `lpc.json`, per part, per colour, per material (`"*"` = every lit material,
+or the material's index from the import):
+
+```json
+"body": {
+  "file": "body.rModel", "template": "bd2900.rModel",
+  "textures": {"BM_A": "body_BM_A.rTexture", "MM_B": "body_MM_white.rTexture", "MM_D": "body_MM_dark.rTexture"},
+  "material_overrides": {
+    "B": {"*": {"spec_power": 24, "spec_colour": 3.5}},
+    "D": {"*": {"spec_power": 4, "spec_colour": 0.3}}
+  }
+}
+```
+
+Tested on bd2900's skin: **latex** = white mask, `spec_power` 24, `spec_colour` 3.5 (really
+shiny); **neoprene** = 16 % grey mask, `spec_power` 4, `spec_colour` 0.3 (really matte). The
+exporter writes `_MM_<letter>` / `_NM_<letter>` images; `material_overrides` is edited in
+`lpc.json` by hand for now. For research, a raw material word also works as a key (`"19": 0.2`:
+the float at that 4-byte index of the 160-byte material record; 19 and 16-17 are still unknown).
 
 ### How the game stores it (reference)
 
