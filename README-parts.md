@@ -223,26 +223,34 @@ the customisation menu. They are not separate shaders: each is a **different col
 skin areas identically in all four and changed the cloth, which is why the clothes recolour and
 the skin stays the same.
 
-### Picking one for a custom part (works now)
+### Choosing a custom part's colours (works now, DX9 and DX11)
 
-A custom part currently wears **one** colour: generated DLC parts always load colour A (the game
-shows "LOST PLANET 2" instead of a swatch for them). Choose which of the **template's** four colour
-maps that is in `lpc.json`:
+List the colours a set offers in `lpc.json`, in menu order:
 
 ```json
-{ "id": "scav01", "name": "Scavenger", "faction": "FF", "colour": "C", "parts": { ... } }
+{ "id": "scav01", "name": "Scavenger", "faction": "FF", "colours": "ACD", "parts": { ... } }
 ```
 
-`"colour"` is `"A"`–`"D"` (default `"A"`); the loader copies that variant's texture into the
-colour-A position for every part of the set. To try the looks, set it, restart the game and check
-the part in customisation; the cached package is rebuilt automatically when the setting changes.
+`"colours"` is a string (`"ABCD"`) or a list (`["A", "C"]`) of letters `A`–`D`.
+- **One colour** (`"C"`): the swatch stays locked, like a stock single-colour part.
+- **Two to four:** the swatch arrows show and step through just those letters (the swatch picture
+  stays the "LOST PLANET 2" placeholder; the letter shows next to it).
+- A newly picked part starts on A if listed, else on the first letter.
+- The old `"colour": "B"` still works and means that one colour only.
+- The Blender exporter writes `"colours"`: the set root collection's custom property
+  `lpc_colours` (e.g. `ACD`) if set, else A plus every letter a part has its own colour map for.
+
+Which texture each letter wears, per part: the part's own `_<letter>` colour map if it has one,
+else its own `_A` (a retextured part's UVs don't fit the template's colours), else the template
+part's colour map for that letter.
+
+The player's choice is remembered per set and part in `ModCache\parts\colours.txt` (the game's
+save keeps one id for a DLC part, with no room for its colour). Per-loadout colours come with the
+carrier system.
 
 Notes:
-- The variants are the **template part's** (the stock part your set is built on, e.g. bd2900). To
-  wear another part's colours, build on that part as the template.
-- Mixing: each part of a set uses the same letter. Put parts in separate sets for different letters.
-- Player-selectable colours (all four in the menu, like stock parts) need the part to be served
-  outside the DLC slots; planned with the "carrier" system.
+- The fallback variants are the **template part's** (the stock part your set is built on, e.g.
+  bd2900). To wear another part's colours, build on that part as the template.
 
 ### Custom textures (works now)
 
@@ -251,7 +259,7 @@ part's materials (any material of the part) with images named by role:
 
 | Image name ends in | Role | Notes |
 |---|---|---|
-| `_A` (`_B`, `_C`, `_D`) | colour map | the four colour variants; the set wears the one `lpc.json "colour"` picks (else `_A`) |
+| `_A` (`_B`, `_C`, `_D`) | colour map | the four colour variants (menu letters in `lpc.json "colours"`); a missing letter falls back to `_A` |
 | `_NM` | normal map | ordinary tangent-space normal map (Blender / OpenGL style, Y up); the exporter converts it to the game's layout |
 | `_MM` | shininess mask | greyscale: white shiny, black matt (see below) |
 

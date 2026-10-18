@@ -483,6 +483,14 @@ def export_sets(outdir, names=None):
                 lines.append("    textures: " + ", ".join(f"{r}={f}" for r, f in tex.items()))
             for w in rep["warnings"]:
                 lines.append("    WARNING: " + w)
+        # menu colours: the root collection's "lpc_colours" property ("ACD"), else A plus every
+        # letter some part has its own colour map for
+        letters = str(root.get("lpc_colours", "")).upper()
+        if not letters:
+            own = {r[3] for p in meta["parts"].values() for r in p.get("textures", {}) if r.startswith("BM_") and len(r) == 4}
+            letters = "".join(sorted(own | {"A"}))
+        meta["colours"] = "".join(c for i, c in enumerate(letters) if c in "ABCD" and c not in letters[:i]) or "A"
+        lines.append(f"  colours: {meta['colours']}")
         with open(os.path.join(setdir, "lpc.json"), "w") as f:
             json.dump(meta, f, indent=1, ensure_ascii=False)
     for arm_name, done in exported.items():
