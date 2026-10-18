@@ -154,6 +154,23 @@ Open: what is `character` for the menu preview vs. players vs. bots; is unit+0x1
 - Not yet: network slots >= 100 / >= 4, bots (stock codes), release of per-player archives (the
   stage unloads its slot as a whole?), member-data sync.
 
+### 6c. Member-data sync + fake member (2026-10-18, built, installed, untested, not committed)
+- Core `src/core/memberdata.{h,cpp}`: MemberDataSet/Listen/Inject; Steam lobby member data keys
+  `<lobbyKeyPrefix>m_<key>`; xsession calls LobbyEntered (create + join), MemberChanged
+  (LobbyDataUpdate member branch), LobbyLeft (every LeaveLobby). Dedupes per (member, key).
+- Parts value "parts": `1;d.<cat>=<set>;<item>.<cat>=<set>...` (last worn + per-alias choices;
+  ChoiceItem). Published at load and on every SetCarrierWorn. Colour rides in the game's code.
+  Room for `:<hash>` per set (downloads later; needs a machine-independent content hash).
+- Slot -> member: XUID in the player info at an offset found at run time from OUR entry
+  (FindInfoXuid scans info+0..0x400 at the stage loop; log "info holds our xuid at +0x.."); our own
+  slot -> menu choice. Unit slot >= 100 -> game 7e5d10 / DX9 7d6e50 thiscall(game, slot-100).
+- Fake member: ModCache\parts\fake_member.txt = `slot <p>` + a parts line; injected at load as
+  Steam id 0x01100001fffffff0. Missing set locally -> warning, falls back to our choice (TODO: the
+  template's stock part / opt-out default).
+- Test: rename fake_member.txt.off (slot 0, body spe3); wear a non-spe3 carrier body; training
+  match -> soldier wears spe3. Logs: "member data:", "member ... choice(s)", "fake member plays
+  slot", "stage request player", "unit ... slot N -> player M", "player set", "info holds our xuid".
+
 ## 7. Ideas to build later (user, 2026-10-18)
 - **Mod manager screen**: in-game (or launcher) screen listing mods (part sets, maps, plugins)
   with on/off toggles and a config editor per mod (e.g. plugin json, lpc.json colours/faction).
