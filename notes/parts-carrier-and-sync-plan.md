@@ -133,6 +133,27 @@ Plan:
    needs their code swapped to a carrier code at request + path time.
 Open: what is `character` for the menu preview vs. players vs. bots; is unit+0x1f the same index.
 
+### 6b. Findings + build (2026-10-18, static RE; untested in game)
+- The archive request `character` is a LOADER slot (0-31, *0x1851de0, allocated by 7d0e60), not a
+  player: the menu previews (cCustomPartsViewer, c3xxxx) own one each; a match loads EVERY player's
+  parts in one stage loop DX11 7d4260 / DX9 7c53b0 thiscall(loader, slot, 0, 2), called from the
+  scene load 7d50d0 / 7d4420: offline (game+0x256 == 0) players 0-3 twice (f8c6a0 codes, then
+  info+0xb4), online players 0-15 once; info = *(game+0x28+p*4), codes at info+0xb4.. (4 cats).
+- In-game units (8cc550 DX11 / DX9 8bce..): parts object = unit+0x6f70 (DX9 +0x6f60), set by
+  f67200(owner=unit, codes...) which stores owner at parts+4; player slot = unit+0x6fe0 (DX9 +0x6fd0)
+  = parts+0x70 in both. Slot >= 100 -> 7e5d10(slot-100); slot >= 4 -> a preset table (NPC codes).
+- Request names: sprintf (DX11 0x1224239 at 7d4097 / 7d4118; DX9 0x1213e59 at 7c51e7 / 7c5268),
+  args (prefix, set, item[, colour]).
+- Built (parts.cpp, "Per-player carrier sets"): players.txt (`<player> <cat> <set id>`, ModCache\parts)
+  -> per-player sets; stage hook counts requests -> player; a player with their own set gets archive
+  `CustomParts\<token><set>[cc]` (sprintf call patch), overlay maps it to the set's build (item 69);
+  PartPath uses the unit's player (parts+0x70) -> CarrierFor. Logs: "per-player sets: names 2,
+  stage 1", "stage parts request", "stage request player N", "unit 0x.. player N", "player set".
+- Test (solo): rename players.txt.off -> players.txt ("0 body spe3"), wear a carrier body other than
+  spe3, start a training match: our soldier should wear spe3 in game, menu keeps the alias choice.
+- Not yet: network slots >= 100 / >= 4, bots (stock codes), release of per-player archives (the
+  stage unloads its slot as a whole?), member-data sync.
+
 ## 7. Ideas to build later (user, 2026-10-18)
 - **Mod manager screen**: in-game (or launcher) screen listing mods (part sets, maps, plugins)
   with on/off toggles and a config editor per mod (e.g. plugin json, lpc.json colours/faction).
