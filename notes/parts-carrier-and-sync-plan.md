@@ -132,3 +132,13 @@ Plan:
    slot's carrier set, to test without a second client. Bots wear stock codes, so forcing them also
    needs their code swapped to a carrier code at request + path time.
 Open: what is `character` for the menu preview vs. players vs. bots; is unit+0x1f the same index.
+
+## 7. Ideas to build later (user, 2026-10-18)
+- **Mod manager screen**: in-game (or launcher) screen listing mods (part sets, maps, plugins)
+  with on/off toggles and a config editor per mod (e.g. plugin json, lpc.json colours/faction).
+  Needs: a per-mod enabled flag the loader honours (Parts\, Maps\, plugins), and a UI host
+  (in-game Flash page via the menu hooks, or an overlay window).
+- **Opt out of synced parts**: a setting so a player never downloads other players' part sets.
+  Remote players wearing a set we don't have (or won't fetch) then show the faction's first stock
+  set for that category (the faction's default part), not the carrier. Default: sync on.
+  Fits §5 step 4 (fallback until it arrives) with "never arrives" when opted out.
