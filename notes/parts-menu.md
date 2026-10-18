@@ -16,7 +16,7 @@ byte1 colour 0-3, byte2 variant, byte3 faction (descriptor tables).
 ## Functions                        DX9          DX11
 - menu update (input)               ed... ee0e00  ef0c20
 - part step L/R (list, unlock, faction filter; DLC 0x0d/0x0e skip faction)
-                                    ed4ca0       (TODO; called from ef0c20)
+                                    ed4ca0       ee4ac0 (confirmed identical; called from ef0c20 @0xef0ea0)
 - apply part (colour := 0, preview, name, swatch)
                                     edd900       eed720
 - colour step (bails for set 0x0c/0x0d/0x0e or single-colour parts; wraps 0-3)
@@ -34,6 +34,14 @@ byte1 colour 0-3, byte2 variant, byte3 faction (descriptor tables).
                                     c2bb10       c3b700
 - preview apply variant (cat, code, 1) c2df40    c3db30
 - other swatch refreshes passing colour 4 for DLC/single-colour: DX11 eedd30 (page refresh), eebaa0
+
+## DLC table (DX11 0x16418b4, .rdata) — checked 2026-10-18
+- ONE table for all 4 categories, 70 u32 codes, index = DLC item 0-69: `0e 00 <item> <fac>`
+  (set 0x0e, colour 0, variant = item, faction byte 0 for items 0-44, 4 for items 45-69).
+- Readers: descriptor id f5c860(set,col,var,cat) (masks off faction) and f5c9a0(code,cat)
+  (drops colour + 0x20, compares variant AND faction) -> both return 0xb4 + index = 180 + item.
+- Carrier at item 69 = id 249 (unlock dword 7, bit 0x80000000>>25; mask is 32 bytes = 256 ids, fits),
+  code 0x0445000e. The existing unlocker already covers it if the carrier is a normal PartPackage.
 
 ## Carrier / colour plan from this
 - Colours: hook colour step (DX11 eeb9a0): our part with N>1 colours -> step through the declared
