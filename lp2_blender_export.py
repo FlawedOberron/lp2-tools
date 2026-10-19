@@ -29,6 +29,7 @@ from mathutils import Vector
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import lp2model as L  # noqa: E402
 import lp2tex  # noqa: E402
+import rchain  # noqa: E402
 
 SLOTS = {"body": "bd", "head": "hd", "back": "bk", "legs": "lg"}
 RAW = os.path.expanduser("~/Projects/lp2-assets/raw/CustomParts")
@@ -260,6 +261,39 @@ def split_pieces(verts, tris, limit=L.MAX_RUN_VERTS):
 
 # ---------------------------------------------------------------- bones
 
+CORE_JOINT_MAX = 19  # j000-j019: identical in every stock part, so they can move between parts
+JOINT_MAX = 127  # highest custom joint id (stock body/leg chains never go above it)
+
+
+def borrow_joint(root, joint):
+    """The bone record of a standard joint from another part template of this set (e.g. the
+    legs' thighs for a body whose waist hangs below the pelvis), with its template's bones."""
+    for c in root.children_recursive:
+        path = c.get("lp2_template")
+        if not path or not os.path.exists(bpy.path.abspath(path)):
+            continue
+        bones = L.read_template(open(bpy.path.abspath(path), "rb").read())["bones"]
+        for b in bones:
+            if b["joint"] == joint and b["parent"] != 255:
+                return dict(bone=b, bones=bones)
+    return None
+
+
+def borrowed_bones(borrowed, std, warnings, part):
+    """Borrowed standard joints as build_model custom bones (parents-first via its queue)."""
+    out = []
+    for j, src in sorted(borrowed.items()):
+        b, bones = src["bone"], src["bones"]
+        pj = bones[b["parent"]]["joint"]
+        if pj not in std and pj not in borrowed:
+            raise L.ExportError(f"{part}: j{j:03d} hangs off j{pj:03d}, which neither this part nor the set's other parts give it")
+        out.append(dict(name=f"j{j:03d}", joint=j, parent=pj, local=b["local"], radius=b["radius"],
+                        mirror_joint=bones[b["mirror"]]["joint"]))
+    if out:
+        warnings.append(f"NOTE: {part}: added standard joints {', '.join(c['name'] for c in out)} from the set's other parts")
+    return out
+
+
 def custom_bones_for(arm, tpl, used_names, set_name, warnings):
     """Custom bones (non-jNNN) this part needs: weighted ones, their ancestors and their
     descendants. Assigns and stores lp2_joint ids. -> list for lp2model, {name: joint}."""
@@ -270,17 +304,24 @@ def custom_bones_for(arm, tpl, used_names, set_name, warnings):
         raise L.ExportError(f"{arm.name}: {len(custom)} custom bones (cap {L.MAX_CUSTOM_BONES})")
     # weighted bones plus the unweighted links between them and the part's skeleton
     need = set()
+    # chain bones (bone physics) need their whole line, weighted or not: the tips pull the rest
+    used_names = set(used_names) | {d.name for b in custom if b.get("lp2_chain") and (b.name in used_names or any(
+        c.name in used_names for c in b.children_recursive)) for d in [b, *b.children_recursive]}
     for name in used_names:
         b = bones[name]
         while b is not None and not JOINT_RE.match(b.name):
             need.add(b.name)
             b = b.parent
-    # ids: keep stored ones, then hand out free ones from the top (game chains use < 190)
+    # ids: keep stored ones, then hand out free ones from JOINT_MAX down
+    # our chains on ids 237-254 never moved, so stored ids above JOINT_MAX are handed out again
+    for b in custom:
+        if "lp2_joint" in b and int(b["lp2_joint"]) > JOINT_MAX:
+            del b["lp2_joint"]
     taken = {b["joint"] for b in tpl["bones"]} | {int(b["lp2_joint"]) for b in custom if "lp2_joint" in b}
     out, ids = [], {}
     for b in sorted((bones[n] for n in need), key=lambda b: len(b.parent_recursive)):
         if "lp2_joint" not in b:
-            free = next((i for i in range(254, 0, -1) if i not in taken), None)
+            free = next((i for i in range(JOINT_MAX, CORE_JOINT_MAX, -1) if i not in taken), None)
             if free is None:
                 raise L.ExportError("no free joint ids left")
             b["lp2_joint"] = free
@@ -372,6 +413,7 @@ def export_part(root, prefix, col, outdir, shadow=True):
         raise L.ExportError(f"template not found: {tpath}")
     tpl = L.read_template(open(tpath, "rb").read())
     std = {b["joint"] for b in tpl["bones"]}
+    borrowed = {}  # standard joint -> its bone record from a sibling part's template
     objs = [o for o in col.all_objects if o.type == "MESH" and not o.hide_render]
     if not objs:
         raise L.ExportError(f"{root.name}/{col.name}: no mesh objects")
@@ -400,6 +442,11 @@ def export_part(root, prefix, col, outdir, shadow=True):
             verts, tris, tri_slots = mesh_data(o, jog)
             stray = sorted({j for v in verts for j, w in v["weights"] if w > L.MIN_WEIGHT
                             and isinstance(j, int) and j not in std})
+            for j in [j for j in stray if j <= CORE_JOINT_MAX and j not in borrowed]:
+                src = borrow_joint(root, j)  # e.g. thighs for a body that covers the hips (as bd2100)
+                if src:
+                    borrowed[j] = src
+            stray = [j for j in stray if j not in borrowed]
             if stray:
                 raise L.ExportError(f"{o.name}: weighted to {', '.join(f'j{j:03d}' for j in stray)}, "
                                     f"which the {col.name} part doesn't have")
@@ -426,6 +473,7 @@ def export_part(root, prefix, col, outdir, shadow=True):
     used_custom = {j for m in meshes for v in m["verts"] for j, w in v["weights"]
                    if isinstance(j, str) and w > L.MIN_WEIGHT}
     customs, custom_ids = custom_bones_for(arm, tpl, used_custom, root.name, warnings)
+    customs = borrowed_bones(borrowed, std, warnings, col.name) + customs
     for m in meshes:
         for v in m["verts"]:
             v["weights"] = [(custom_ids[j] if isinstance(j, str) else j, w) for j, w in v["weights"]
@@ -442,7 +490,36 @@ def export_part(root, prefix, col, outdir, shadow=True):
     rep["path"], rep["template"] = path, tpath
     rep["custom"] = {c["name"]: c["joint"] for c in customs}
     rep["armature"] = arm
+    rep["chain"] = None
+    chains = bone_chains(arm, custom_ids)
+    if chains:  # bone physics: custom bones marked "lp2_chain" and the single-child line below each
+        cpath = os.path.splitext(path)[0] + ".rChain"
+        with open(cpath, "wb") as f:
+            f.write(rchain.build(chains))
+        rep["chain"] = os.path.basename(cpath)
+        rep["chains"] = chains
     return rep
+
+
+def bone_chains(arm, custom_ids):
+    """[[joint id, ...], ...] for each exported custom bone with the "lp2_chain" property: that bone
+    and the line of exported custom bones below it (one child each)."""
+    out = []
+    for name, j in custom_ids.items():
+        b = arm.data.bones[name]
+        if not b.get("lp2_chain"):
+            continue
+        chain = [j]
+        while True:
+            kids = [c for c in b.children if c.name in custom_ids]
+            if len(kids) != 1:
+                break
+            b = kids[0]
+            chain.append(custom_ids[b.name])
+        if len(chain) < 2:
+            raise L.ExportError(f"chain bone {name}: needs at least one exported custom bone below it")
+        out.append(chain)
+    return out
 
 
 # ---------------------------------------------------------------- textures
@@ -536,6 +613,9 @@ def export_sets(outdir, names=None):
             exported.setdefault(rep["armature"].name, set()).update(rep["custom"])
             meta["parts"][slot] = dict(file=os.path.basename(rep["path"]), template=os.path.basename(rep["template"]),
                                        custom_joints=rep["custom"])
+            if rep["chain"]:
+                meta["parts"][slot]["chain"] = rep["chain"]
+                lines.append(f"    chains: {len(rep['chains'])} -> {rep['chain']} (" + "; ".join(",".join(map(str, c)) for c in rep["chains"]) + ")")
             if rep["overrides"]:
                 meta["parts"][slot]["material_overrides"] = rep["overrides"]
                 lines.append("    colour overrides: " + json.dumps(rep["overrides"]))

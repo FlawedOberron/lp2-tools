@@ -94,3 +94,12 @@ who calls these helpers (vtables) and the VS zoom state field.
 - Leaving page select copies screen+0x1e0 (45 u32) to options(*0x1852238)+0x68..0x11c.
 - Flying VS: ascend = change weapon bit w1 0x8 (wheel = 1-frame pulses, can't hold), descend guess w2 0x40000.
   In a VS the grenade button gives w1 0x1 = get out. Fly types seen: 0xda (confirmed), 0xa8.
+
+## Pause-menu key config (2026-10-19)
+- User: main-menu Options > Controls shows our headers/rows; the PAUSE menu key config does not.
+- Cause: the pause menu is a second copy of the page with its own row table {label, slot} x35 at DX11
+  0x163c278 (slot field 0x163c27c, label ids 0x163c3d8; same contents as 0x1636c70) and its own functions
+  ~0xf29b00-0xf32300. Table reads: f2d817 (lea, likely the draw), f2f8a3, f2f9bc, f2f9d6, f308f9/f30900/f30935,
+  f30f72, f321f3, f32212. Strings/ids pushed at f29ba2.. f29da9, f31fdd, f3200f, f4327d.
+- To do: mirror menu.cpp for this copy (redirect the table reads, row count sites, replace its 8-row draw,
+  header skip in its list/number input, Enter/toggle). Decompile those functions first (DecompAt.java).

@@ -3,6 +3,7 @@
 
   xfs.py FILE [--json]
 
+LP1 (360) files: same layout big-endian, magic '\\0SFX', version 4, class field count = u16 (count * 2).
 Layout: 'XFS\\0' u16 ver(8) u16 1 u32 classCount u32 defSize
   u32 classOff[classCount] (relative to 0x10)
   class: u32 hash, u32 nfields, fields[24]: u32 nameOff(rel 0x10) u8 type u8 attr u16 size +12
@@ -16,24 +17,27 @@ SCALAR = {3: "<B", 4: "<B", 5: "<H", 6: "<I", 7: "<Q", 8: "<b", 9: "<h", 10: "<i
 
 def parse(b, vec_offsets=None):
     """vec_offsets, when a list, collects (field name, byte offset) of every vec3 value."""
-    assert b[:4] == b"XFS\0", "not XFS"
-    ncls, defsize = struct.unpack_from("<II", b, 0x08)
+    assert b[:4] in (b"XFS\0", b"\0SFX"), "not XFS"
+    E = ">" if b[:4] == b"\0SFX" else "<"  # LP1 360: big-endian, v4
+    ncls, defsize = struct.unpack_from(E + "II", b, 0x08)
     base = 0x10
-    offs = struct.unpack_from(f"<{ncls}I", b, base)
+    offs = struct.unpack_from(f"{E}{ncls}I", b, base)
     def cstr(o):
         return b[o:b.index(b"\0", o)].decode()
     classes = []
     for o in offs:
-        h, n = struct.unpack_from("<II", b, base + o)
+        h, n = struct.unpack_from(E + "II", b, base + o)
+        if E == ">":  # v4: u16 field count * 2, u16 0
+            n = (n >> 16) >> 1
         fields = []
         for k in range(n):
-            no, t, attr, size = struct.unpack_from("<IBBH", b, base + o + 8 + 24 * k)
+            no, t, attr, size = struct.unpack_from(E + "IBBH", b, base + o + 8 + 24 * k)
             fields.append((cstr(base + no), t, size))
         classes.append((h, fields))
     pos = [base + defsize]
 
     def u(fmt):
-        v = struct.unpack_from(fmt, b, pos[0]); pos[0] += struct.calcsize(fmt); return v
+        v = struct.unpack_from(E + fmt.lstrip("<"), b, pos[0]); pos[0] += struct.calcsize(fmt); return v
 
     def obj():
         tag, oid, size = u("<HHI")

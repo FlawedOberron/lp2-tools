@@ -29,14 +29,19 @@ def load_types():
 
 
 def entries(data):
-    magic, ver, n = struct.unpack_from("<4sHH", data)
-    if magic != b"ARC\0":
+    # PC: 'ARC\0' little-endian, size | flags << 29. Xbox 360 (LP1 Colonies): '\0CRA' big-endian,
+    # size << 3 | flags.
+    big = data[:4] == b"\0CRA"
+    if data[:4] != b"ARC\0" and not big:
         raise SystemExit("not an ARC file")
+    e = ">" if big else "<"
+    ver, n = struct.unpack_from(e + "HH", data, 4)
     if ver != 8:
         print(f"warning: ARC version {ver}, expected 8", file=sys.stderr)
     for i in range(n):
-        name, th, cs, ds, off = struct.unpack_from("<64sIIII", data, 8 + i * 80)
-        yield name.split(b"\0")[0].decode("latin-1"), th, cs, ds & 0x1FFFFFFF, ds >> 29, off
+        name, th, cs, ds, off = struct.unpack_from(e + "64sIIII", data, 8 + i * 80)
+        size, flags = (ds >> 3, ds & 7) if big else (ds & 0x1FFFFFFF, ds >> 29)
+        yield name.split(b"\0")[0].decode("latin-1"), th, cs, size, flags, off
 
 
 def class_hash(cls):

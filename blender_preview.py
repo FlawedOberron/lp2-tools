@@ -19,6 +19,9 @@ for mat in bpy.data.materials:
                     mat.node_tree.links.remove(l)
                 n.inputs["Alpha"].default_value = 1.0
     mat.surface_render_method = "DITHERED"
+# ...and Blender would premultiply colour by that mask on load (LP1 faces: alpha ~0 -> black skin)
+for img in bpy.data.images:
+    img.alpha_mode = "CHANNEL_PACKED"
 pts = [o.matrix_world @ Vector(c) for o in objs for c in o.bound_box]
 lo = Vector((min(p[i] for p in pts) for i in range(3)))
 hi = Vector((max(p[i] for p in pts) for i in range(3)))

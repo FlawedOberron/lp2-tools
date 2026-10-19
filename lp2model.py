@@ -211,17 +211,28 @@ def build_model(tpl, custom_bones, meshes, shadow=True):
             if c["joint"] in index:
                 raise ExportError(f"joint id {c['joint']} used twice")
             p = index[c["parent"]]
-            wm = translation(c["world"])
-            local = mmul(wm, minv(bones[p]["wm"]))
+            if "local" in c:  # a standard joint copied from another part's template (rotation kept)
+                local = tuple(c["local"])
+                wm = mmul(local, bones[p]["wm"])
+            else:
+                wm = translation(c["world"])
+                local = mmul(wm, minv(bones[p]["wm"]))
             index[c["joint"]] = len(bones)
-            bones.append(dict(joint=c["joint"], parent=p, mirror=len(bones), radius=0.0,
-                              local=local, wm=wm, world=tuple(c["world"])))
+            bones.append(dict(joint=c["joint"], parent=p, mirror=len(bones), radius=c.get("radius", 0.0),
+                              local=local, wm=wm, world=tuple(wm[12:15])))
             pending.remove(c)
+    for c in custom_bones:  # copied standard joints keep their left/right pairing
+        if "mirror_joint" in c and c["mirror_joint"] in index:
+            bones[index[c["joint"]]]["mirror"] = index[c["mirror_joint"]]
     if len(bones) > 255:
         raise ExportError("more than 255 bones")
     for b in bones:
         b["dist"] = math.hypot(*b["local"][12:15]) if b["parent"] != 255 else 0.0
         b["inv"] = minv(b["wm"])
+    # custom bones get a radius like the stock chain bones' (6-13 cm; 0 leaves bone physics still)
+    for b in bones[len(tpl["bones"]):]:
+        if not b["radius"]:
+            b["radius"] = min(15.0, max(4.0, b["dist"]))
 
     # every mesh, plus a shadow copy when the template has the untextured material
     shadow_mat = shadow_material(tpl) if shadow else None
