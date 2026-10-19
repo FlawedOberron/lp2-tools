@@ -88,6 +88,9 @@ def build_col(capsules):
 
 THIGHS_COL = [(2, 3, (0, 0, 0), (0, 0, 0), 13.0), (5, 6, (0, 0, 0), (0, 0, 0), 13.0)]
 TORSO_COL = [(9, 8, (0, 45, 0), (0, 15, 0), 25.0)]  # bd2700's, 4 cm fatter
+HIPS_COL = [(8, 1, (0, 0, 0), (0, 0, 0), 20.0)]  # spine to pelvis
+PELVIS_COL = [(1, -1, (0, 0, 0), (1, 1, 1), 18.0)]  # a sphere (bd2301's form: no joint b, scale 1)
+# a shape's joints must be bones of the part's own model (the game crashes on a miss; the DLL skips such files)
 
 if __name__ == "__main__":
     import math

@@ -49,3 +49,18 @@
 - `"mods": {"parts_any_faction": true}` sets the part menu's own ignore-faction byte (m+0x72f): stock + custom.
 - `parts_first_slot` removed (dead since the carrier: fixed slots 20-39 + 69).
 - Maps/TestArena.zip moved to lp2-assets/old-mods/. VS 0xc2 = stationary gun (no context yet).
+
+## Battlegrounds test 2 (installed, untested)
+- Test 1 result: geometry OK; collision/spawns/objects = map 00 (expected). Crash before that = stale part package
+  (chaincol thigh joints missing from Basil body); fixed by the chain/col file stamp in parts.cpp + crash logger
+  (mods/crashlog.cpp: vectored handler -> "crash:" lines, exe addresses at preferred base).
+- lp2col.py: LP1 PC (Steam LP1 nativePC/ZZPack2/s900.arc, little-endian SBC1) ataris900/tamas900 -> LP2 SBC\xff
+  with BVHC (format in its docstring; validated: every leaf once, boxes contain tris; stock passes the same check).
+  LP1 surface flags 0x8000xxxx -> 0x4000xxxx match online00's table exactly. sbc.py doc fixed (no plane distance).
+- lp2layout.py: patches stock rInitPosSet (Pos/Dir in place) and rObjSet (VS/weapon positions, extras dropped)
+  from points/s900.json; variant -0N <- LP1 set '0N'. Weapons: LP1 lists 2 per layout, extras go on k40 points
+  then FFA starts.
+- arcput.py: replace arc entries by name suffix + class. rOccluder count zeroed (map 00 occluders would cull).
+- Package build: scratchpad bg/v2 (from ta/) -> Battlegrounds2.zip -> Maps/Battlegrounds.zip (test 1 kept as
+  bg/Battlegrounds-test1.zip). Still map 00: havonline00 (Havok physics), rAreaHitLayout, SceneBox/lighting,
+  radar map, posts (objset groups 2/3), sky.

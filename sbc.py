@@ -12,13 +12,13 @@ Layout (little-endian), from atarionline00 (1.7 MB):
   0x20 bounds: vec4 min, vec4 max
   0x40 groups x 48 bytes: vec4 min, vec4 max, u32 runtime, u32 first triangle, u32 first vertex, u32 -1
   then triangles x 32 bytes: f32 normal xyz, u16 v0 v1 v2 (relative to the group's first vertex),
-       u16 surface type, 12 bytes runtime (0), f32 plane distance
+       u16 surface type, 12 bytes 0 (no plane distance)
   then vertices x 16 bytes: f32 xyz, 0
   then surface types x 32 bytes: u32 flags (e.g. 0x19f8f6ff, 0x40002000), u32[2] 0, u32 0xff,
        u32 0, u32[3] hash-like constants
   then 'BVHC' chunks, one per group plus one over the groups: 'BVHC' u32 2008120100 u32 1 u32 0,
-       vec4 min, vec4 max, u32 nodes, u32 triangles, u32[2] 0, u16 triangle list, then nodes x 112
-       bytes (16 bytes child info, 4-wide boxes as 6 x 4 floats). Not needed to read the mesh.
+       vec4 min, vec4 max, u32 nodes, u32 triangles, u32[2] 0, u16 leaf order, then nodes x 112
+       bytes (lp2col.py documents and writes them). Not needed to read the mesh.
 """
 import os, struct, sys
 
