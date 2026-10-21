@@ -17,7 +17,9 @@
 # custom: each chain must hang off a joint the part already has; only bones carrying weight
 # (and the links between them and the skeleton) are exported; ids are assigned once and
 # stored on the bone as "lp2_joint". Only the high detail level is authored: every mesh is
-# exported for all distances and gets a shadow copy. Materials, per material slot: the material's
+# exported for all distances and gets a shadow copy. Effects: the template part's effects (lamps) are
+# dropped ("effects": "none" in lpc.json) unless the part / LPC collection has lp2_effects = "template".
+# Materials, per material slot: the material's
 # (or object's) custom property "lp2_mat" (template material index), else the importer's
 # <part>_matNNN name, else the template's first textured material.
 # The template (standard skeleton, materials, textures) is the part's original rModel:
@@ -613,6 +615,10 @@ def export_sets(outdir, names=None):
             exported.setdefault(rep["armature"].name, set()).update(rep["custom"])
             meta["parts"][slot] = dict(file=os.path.basename(rep["path"]), template=os.path.basename(rep["template"]),
                                        custom_joints=rep["custom"])
+            # the template's effects (the 29xx parts' lamps) sit where its own model had them: off unless
+            # the part (or set) collection says lp2_effects = "template"
+            if str(col.get("lp2_effects", root.get("lp2_effects", "none"))).lower() != "template":
+                meta["parts"][slot]["effects"] = "none"
             if rep["chain"]:
                 meta["parts"][slot]["chain"] = rep["chain"]
                 lines.append(f"    chains: {len(rep['chains'])} -> {rep['chain']} (" + "; ".join(",".join(map(str, c)) for c in rep["chains"]) + ")")

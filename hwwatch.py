@@ -118,7 +118,8 @@ def watch(pid, addrs, seconds):
                     sp = regs[19] & 0xFFFFFFFF
                     with open(f"/proc/{pid}/mem", "rb") as mm:
                         mm.seek(sp)
-                        words = struct.unpack("<4I", mm.read(16))
+                        nw = int(os.environ.get("HWSTACK", "4"))
+                        words = struct.unpack(f"<{nw}I", mm.read(4 * nw))
                     ip = (regs[RIP_IDX], words)
                 else:
                     ip = regs[RIP_IDX] if not SHOW_ECX else (regs[RIP_IDX], regs[REG_IDX] & 0xFFFFFFFF)

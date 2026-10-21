@@ -13,6 +13,8 @@
 #     hue 260-340) to this hue, keeping their brightness and shading (Valkyrie: 28 = LP2 orange).
 #     A stopgap: the plan is a player energy colour applied to every custom part (see notes).
 #   --drop-groups G,G: leave these LP1 mesh groups out (Basil without her poncho / pouch: 6,17).
+#   --trim-legs 1: leg triangles above the template body's floor go to the body only (default: both, so the legs
+#       still fill the gap under other torsos; Basil's poked above her belt).
 #   --parts P,P: only make these parts (head, body, legs), e.g. an alternative torso as its own set.
 #   --skirt G,G[:N]: bone physics for a skirt with no bones of its own (Snow Bunny: 5,10): N strands
 #     (default 8) of 3 bones are placed around those mesh groups from the waistband to the hem, off
@@ -32,7 +34,7 @@
 # texture placed in a spare atlas cell and tinted, per colour letter, to the LP1 glove's average.
 # Waist: stock bodies reach below the pelvis and stock legs stop above it, so any body covers any
 # legs. Leg triangles above the template body's lowest point are copied into the body as well.
-import bpy, math, os, re, sys
+import bpy, math, os, re, struct, sys
 import numpy as np
 from mathutils import Vector
 
@@ -46,6 +48,7 @@ LP1_NECK, LP1_HEAD = 9, 10
 PART_OF = {10: "head", 11: "head", **{j: "legs" for j in range(1, 8)}}  # else body
 PREFIX = {"head": "hd", "body": "bd", "legs": "lg"}
 ATLAS_MAX = 1024
+CUTOUT = 0.25  # share of see-through texels that makes an LP1 colour map a cut-out (Basil hm05-04: 73%)
 HAND_GROUPS = range(200, 208)
 WRIST = {15: -1, 19: 1}  # LP2 wrist joints, by side (x sign)
 THIGHS = {2, 5}  # LP2 hip joints: the body's waist copies keep their leg weights
@@ -76,7 +79,12 @@ def template_info(path):
     for m in Md["meshes"]:
         if m["mat"] < len(Md["mats"]) and tuple(Md["mats"][m["mat"]]) != (0, 0, 0):
             use[m["mat"]] = use.get(m["mat"], 0) + m["vc"]
-    return bones, max(use, key=use.get)
+    plain = max(use, key=use.get)
+    # its alpha-tested twin: same flags plus 0x4000 (the stock parts' cut-out materials)
+    tex_off, ntex = struct.unpack_from("<I", b, 0x2C)[0], struct.unpack_from("<I", b, 0x1C)[0]
+    flags = [struct.unpack_from("<I", b, tex_off + 64 * ntex + 160 * i)[0] for i in range(len(Md["mats"]))]
+    cut = next((i for i, f in enumerate(flags) if f == flags[plain] | 0x4000 and f != flags[plain]), None)
+    return bones, plain, cut
 
 
 def load_rgba(tex_path, cache):
@@ -284,9 +292,9 @@ def main():
         srcs.append(h)
 
     tpl = {part: template(part, series) for part in PREFIX}
-    p2, par2, allowed, tmat = {}, {}, {}, {}
+    p2, par2, allowed, tmat, tcut = {}, {}, {}, {}, {}
     for part, path in tpl.items():
-        bones, tmat[part] = template_info(path)
+        bones, tmat[part], tcut[part] = template_info(path)
         w, par = world_joints(bones)
         p2.update(w)
         par2.update(par)
@@ -371,7 +379,7 @@ def main():
                     continue
             targets = [(part, part)]
             if part == "legs" and sum((IMP.AXIS @ Vector(tuple(moved(v[0], v[3])))).z * IMP.SCALE for v in vs) / 3 > body_floor:
-                targets.append(("body", "waist"))
+                targets = [("body", "waist")] if "--trim-legs" in opts else targets + [("body", "waist")]
             for part, rule in targets:
                 P = parts[part]
                 ids = []
@@ -424,7 +432,7 @@ def main():
         mat_slots = {s: next(mm for mm in srcs[s[0]]["M"]["mats"] if mm[0] == s[1]) for s in sets}
         roles["_NM"] = [(s, tex_name(s, mat_slots[s][1])) for s in sets]
         roles["_MM"] = [(s, tex_name(s, mat_slots[s][2])) for s in sets]
-        images = {}
+        images, cutout = {}, set()  # cutout: sets whose colour map is mostly holes (laces): keep alpha
         for suffix, files in roles.items():
             atlas = np.zeros((rows * cell, cols * cell, 4), dtype=np.float32)
             atlas[...] = (0.5, 0.5, 1.0, 1.0) if suffix == "_NM" else (0, 0, 0, 1)
@@ -439,11 +447,18 @@ def main():
                 if suffix == "_NM":
                     lp1_px[s] = rgb_normals(lp1_px[s])
                 atlas[r * cell:(r + 1) * cell, c * cell:(c + 1) * cell] = resize(lp1_px[s], cell)
+                if suffix == "_A" and tcut[part] is not None and (lp1_px[s][..., 3] < 0.5).mean() > CUTOUT:
+                    cutout.add(s)
             if hands:
                 c, r = place["hand"]
                 atlas[r * cell:(r + 1) * cell, c * cell:(c + 1) * cell] = resize(hand_texture(hands, suffix, hand_tris, lp1_px), cell)
             if suffix not in ("_NM",):
+                keep = atlas[..., 3].copy()
                 atlas[..., 3] = 1.0  # LP1 keeps masks in alpha; LP2 would read it as transparency
+                if suffix[1:] in "ABCD":
+                    for s in cutout:
+                        c, r = place[s]
+                        atlas[r * cell:(r + 1) * cell, c * cell:(c + 1) * cell, 3] = keep[r * cell:(r + 1) * cell, c * cell:(c + 1) * cell]
             name = f"{set_id}_{part}{suffix}"
             img = bpy.data.images.new(name, cols * cell, rows * cell, alpha=True)
             img.pixels[:] = atlas.ravel()
@@ -451,6 +466,13 @@ def main():
             img.filepath_raw = os.path.join(cache, name + ".png")
             img.file_format = "PNG"
             img.save()
+            # as a file image: a generated one is regenerated (flat) when the blend reloads or its
+            # colour space changes, which the masks / normal maps then exported
+            img.source = "FILE"
+            img.filepath = img.filepath_raw
+            if suffix in ("_NM", "_MM"):
+                img.colorspace_settings.name = "Non-Color"
+            img.reload()
             img.pack()
             images[suffix] = img
 
@@ -465,6 +487,7 @@ def main():
             node.location = (-400, 300 - 280 * k)
             if suffix == "_A":
                 nt.links.new(node.outputs["Color"], bsdf.inputs["Base Color"])
+                nt.links.new(node.outputs["Alpha"], bsdf.inputs["Alpha"])
             elif suffix in ("_NM", "_MM"):
                 node.image.colorspace_settings.name = "Non-Color"
 
@@ -481,6 +504,13 @@ def main():
                 c, r = place[v[5]]
                 uvl.data[li].uv = ((c + v[3][0]) / cols, (r + v[3][1]) / rows)
         me.materials.append(mat)
+        if cutout:  # those sets' triangles -> the template's alpha-tested material
+            cmat = mat.copy()
+            cmat.name, cmat["lp2_mat"] = f"{set_id}_{part}_mat{tcut[part]:03d}", tcut[part]
+            me.materials.append(cmat)
+            for poly in me.polygons:
+                if verts[poly.vertices[0]][5] in cutout:
+                    poly.material_index = 1
         ob = bpy.data.objects.new(part if part != "body" else "torso", me)
         col.objects.link(ob)
         groups = {}
@@ -511,7 +541,8 @@ def main():
                     m2.name, m2["lp2_mat"] = name, i
                     slot.link, slot.material = "OBJECT", m2
         print(f"{part}: {len(verts)} vertices, {len(P['tris'])} triangles, {len(sets)} texture set(s) -> "
-              f"{cols * cell}x{rows * cell} atlas, letters {''.join(letters)}, template material {tmat[part]}")
+              f"{cols * cell}x{rows * cell} atlas, letters {''.join(letters)}, template material {tmat[part]}"
+              + (f", cut-out sets {sorted(cutout)} -> material {tcut[part]}" if cutout else ""))
 
     bpy.ops.wm.save_as_mainfile(filepath=os.path.abspath(out_blend), compress=True)
     print("saved", out_blend)
