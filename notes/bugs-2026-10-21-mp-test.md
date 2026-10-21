@@ -6,8 +6,14 @@
    - Written by an older, backdated LP2 build that he kept to keep his save. So it's an older save
      format: decode it and convert or import it.
    - Discord's transfer trimmed the name to `...Save-`.
-2. **[DL - X/X] not showing for other users.** When the user joined as a client, it showed for them.
-   When the user hosted, the others didn't see it. Possibly a DLL mismatch: check both builds.
+2. **[DL - X/X] not showing for other users.**
+   - Everyone ran the same DLL build.
+   - The user always sent (custom parts and maps). The others had none, so they only ever received.
+   - The user saw the receivers' [DL] progress, but the receivers never saw their own.
+   - So the label probably shows only other members' `content` member data. The local player's own
+     download state (TransferProgress) never reaches their own lobby row: own member data isn't read
+     back, or isn't echoed by Steam before the transfer ends.
+   - Check where the lobby UI picks the [DL] text, and use the local transfer state for your own row.
 3. **"Digs" on Battlegrounds** = "dig here" piles with buried items, in odd places: almost certainly
    Desecration leftovers.
    - Find the group / record kind in rObjSet (the Common file or the per-mode files).
@@ -45,7 +51,4 @@ the session.
 6. **App ID 480 (Spacewar) for questionable copies.** Already planned:
    - a helper process on 480 for Steam copies
    - a `"non_steam"` config option, for players without LP2 on Steam
-7. **DL not showing on clients.** Content transfer progress (member data `content` = `dl <pct>`) isn't
-   shown on the joiner's side.
-   - The host sees it, or nobody does?
-   - Check the lobby UI hook for remote members' content state.
+7. **DL not showing on clients:** see the top list. Receivers don't see their own download.
