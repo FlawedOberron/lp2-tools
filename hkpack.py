@@ -3,7 +3,7 @@
 
   hkpack.py FILE        list the objects (offset in data section, class, size to the next object)
 
-Header (0x40, little-endian): magic x2, u32 user tag, u32 file version (2 = Havok 4.x / LP1, 7 = 6.x / LP2),
+Header (0x40, in the file's byte order: Xbox 360 files are big-endian): magic x2, u32 user tag, u32 file version (2 = Havok 4.x / LP1, 7 = 6.x / LP2),
 u8 x4 layout rules (pointer size 4, little endian, reuse padding, empty base class), u32 num sections,
 u32 contents section index, u32 contents offset, u32 contents class name section index, u32 offset,
 char[16] contents version ("Havok-6.6.0-r1"; v2 files have none), u32 flags, u32 pad.
@@ -20,19 +20,20 @@ def read(b):
     magic = b[:8]
     if magic != bytes.fromhex("57e0e05710c0c010"):
         raise ValueError("not a Havok packfile")
-    ver, = struct.unpack_from("<I", b, 0x0C)
-    nsec, = struct.unpack_from("<I", b, 0x14)
+    E = "<" if b[0x11] else ">"  # layout rules: little endian (0 on Xbox 360)
+    ver, = struct.unpack_from(E + "I", b, 0x0C)
+    nsec, = struct.unpack_from(E + "I", b, 0x14)
     hsize = 0x30
     secs = []
     for i in range(nsec):
         o = 0x40 + i * hsize
         tag = b[o:o + 19].split(b"\0")[0].decode()
-        start, lf, gf, vf, ex, im, end = struct.unpack_from("<7I", b, o + 20)
+        start, lf, gf, vf, ex, im, end = struct.unpack_from(E + "7I", b, o + 20)
         secs.append(dict(tag=tag, start=start, local=lf, glob=gf, virt=vf, exports=ex, imports=im, end=end))
     def pairs(s, a, z, n):
         out = []
         for o in range(s["start"] + a, min(s["start"] + z, len(b) - 4 * n + 1), 4 * n):
-            v = struct.unpack_from(f"<{n}I", b, o)
+            v = struct.unpack_from(f"{E}{n}I", b, o)
             if v[0] != 0xFFFFFFFF:
                 out.append(v)
         return out
@@ -48,7 +49,7 @@ def read(b):
         return b[o:b.index(b"\0", o)].decode()
     data = next(s for s in secs if s["tag"] == "__data__")
     objs = sorted((src, cname(sec, off)) for src, sec, off in data["virtuals"])
-    return dict(version=ver, sections=secs, objects=objs, data=data)
+    return dict(E=E, version=ver, sections=secs, objects=objs, data=data)
 
 
 if __name__ == "__main__":

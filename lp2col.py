@@ -3,7 +3,7 @@
 
   lp2col.py LP1.sbc1 TEMPLATE.rCollision OUT.rCollision
 
-LP1 (little-endian, nativePC ZZPack2/sNNN.arc scr\\stageN\\sNNN\\atari/tamasNNN):
+LP1 (little-endian on PC, big-endian on Xbox 360; nativePC ZZPack2/sNNN.arc scr\\stageN\\sNNN\\atari/tamasNNN):
   0x00 'SBC1' u32 file size, u16 6, u16 groups, u16 groups - 1, u16 ?, u32 offsets: groups, triangles,
        surfaces ?, vertices; 0x20 u32 tris - 1, tris, groups, vertices; 0x30 bounds ?; 0x50 a BVH (unused)
   groups x 24: u32 0, u32 first triangle, u32 ?, u32 first vertex, u32 index, u32 ?
@@ -34,11 +34,12 @@ EMPTY = (3e38, 3e38, 3e38, -3e38, -3e38, -3e38)
 def read_sbc1(b):
     if b[:4] != b"SBC1":
         raise ValueError("not an LP1 SBC1 collision file")
-    ng = struct.unpack_from("<H", b, 10)[0]
-    og, ot, os_, ov = struct.unpack_from("<4I", b, 0x10)
+    E = "<" if b[8] == 6 else ">"  # u16 6: PC little-endian, Xbox 360 (Colonies maps) big-endian
+    ng = struct.unpack_from(E + "H", b, 10)[0]
+    og, ot, os_, ov = struct.unpack_from(E + "4I", b, 0x10)
     ntri, nv = (os_ - ot) // 48, (len(b) - ov) // 16
-    grp = [struct.unpack_from("<6I", b, og + 24 * i) for i in range(ng)]
-    verts = [struct.unpack_from("<3f", b, ov + 16 * i) for i in range(nv)]
+    grp = [struct.unpack_from(E + "6I", b, og + 24 * i) for i in range(ng)]
+    verts = [struct.unpack_from(E + "3f", b, ov + 16 * i) for i in range(nv)]
     groups = []
     for gi, g in enumerate(grp):
         t1 = grp[gi + 1][1] if gi + 1 < ng else ntri
@@ -46,7 +47,7 @@ def read_sbc1(b):
         tris = []
         for t in range(g[1], t1):
             o = ot + 48 * t
-            tris.append((struct.unpack_from("<3H", b, o + 16), struct.unpack_from("<I", b, o + 0x1C)[0]))
+            tris.append((struct.unpack_from(E + "3H", b, o + 16), struct.unpack_from(E + "I", b, o + 0x1C)[0]))
         groups.append(dict(verts=verts[g[3]:v1], tris=tris))
     return groups
 

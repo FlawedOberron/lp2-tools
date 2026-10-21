@@ -164,3 +164,13 @@
   blend lp1/port/basil_cb.blend. Installed, untested.
 - Deleted LPC_lp1basilnp (poncho-free Basil from hm05) at user request: installed set, blend, export, textures. Replaced by LPC_lp1basilcb (hmcb).
 - LPC_lp1basilcb colours B/C/D (scratchpad cb_schemes.py): grey gear (boots/belts) -> NEVEC FF (bd2904) cloth medians: B brown x2.2, C urban grey x1.6, D black; A original. Installed, untested.
+
+## Area 921 (s921) test 1 (2026-10-21, built, installs when the game closes)
+- s921 is Colonies-only: source = Xbox 360 ZZPack2/s921.arc (big-endian). lp2col / hkpack / lp2havok now read
+  big-endian SBC1 and Havok 4 packfiles (layout rules byte 0x11 = little endian flag).
+- Build (scratchpad a921/): lp2stage s921 + s921_sky (sky dome +-7.7 km, 1 mesh) -> packed _scr arc as for
+  Battlegrounds; package = copy of Battlegrounds v10, paths online00/lp1bg900 -> 'scr\Online\lp1ar921\'
+  (arcsub); atari 27k / tama 65k tris; havok 65k tris MOPP 677 KB; layout = regen_layout + markers lifted
+  onto the floor (lift.py, <= 60 cm) + 30 slot pickups on k40/start (as layout11); 1 data post per variant
+  (no mirroring yet); light = Battlegrounds' sun/sky/curves, bounds -13300..9650 x -15200..14600,
+  intro camera = high orbit (y 7500, r 10 km) round (-1827, -850, -296). No thumbnail. Copy in lp2-assets/maps.

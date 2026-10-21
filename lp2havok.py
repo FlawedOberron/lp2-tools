@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Lost Planet 1 (PC) map physics (Havok 4 packfile) -> Lost Planet 2 rHkCollision (Havok 6.6 packfile).
+"""Lost Planet 1 (PC or Xbox 360) map physics (Havok 4 packfile) -> Lost Planet 2 rHkCollision (Havok 6.6 packfile).
 
   lp2havok.py LP1_HAV.bin LP2_TEMPLATE.rHkCollision OUT.rHkCollision
 
@@ -24,8 +24,8 @@ def obj(p, cls):
     return next(o for o, c in p["objects"] if c == cls)
 
 
-def arr(b, at):
-    return struct.unpack_from("<I", b, at + 4)[0]  # hkArray: ptr, size, capacity | flags
+def arr(b, at, E="<"):
+    return struct.unpack_from(E + "I", b, at + 4)[0]  # hkArray: ptr, size, capacity | flags
 
 
 def pad16(x, fill=b"\0"):
@@ -46,13 +46,14 @@ def main():
         raise SystemExit(f"template objects end with {objs_t[-2:]}, expected MOPP code then the mesh")
 
     # LP1 mesh + MOPP
+    E = p1["E"]  # Colonies maps only exist as Xbox 360 (big-endian) files
     m1 = d1 + obj(p1, "hkSimpleMeshShape")
-    nv, nt = arr(b1, m1 + 0x10), arr(b1, m1 + 0x1C)
-    verts = b1[m1 + 0x40:m1 + 0x40 + 16 * nv]
-    tris = [struct.unpack_from("<3i", b1, m1 + 0x40 + 16 * nv + 12 * i) for i in range(nt)]
+    nv, nt = arr(b1, m1 + 0x10, E), arr(b1, m1 + 0x1C, E)
+    verts = struct.pack(f"<{4 * nv}f", *struct.unpack_from(f"{E}{4 * nv}f", b1, m1 + 0x40))
+    tris = [struct.unpack_from(E + "3i", b1, m1 + 0x40 + 16 * nv + 12 * i) for i in range(nt)]
     c1 = d1 + obj(p1, "hkMoppCode")
-    info = b1[c1 + 0x10:c1 + 0x20]
-    code = b1[c1 + 0x30:c1 + 0x30 + arr(b1, c1 + 0x20)]
+    info = struct.pack("<4f", *struct.unpack_from(E + "4f", b1, c1 + 0x10))
+    code = b1[c1 + 0x30:c1 + 0x30 + arr(b1, c1 + 0x20, E)]
     if max(max(x) for x in tris) >= nv:
         raise SystemExit("triangle index out of range: LP1 layout guess is wrong")
 
