@@ -52,3 +52,53 @@ the session.
    - a helper process on 480 for Steam copies
    - a `"non_steam"` config option, for players without LP2 on Steam
 7. **DL not showing on clients:** see the top list. Receivers don't see their own download.
+
+## 2026-10-22 (user)
+8. **Secondary rule only on the first spawn.** Rules Spawn hook only filled slot 7 when it was empty; on respawn it
+   still holds what the player carried. Fixed (untested): slot 7 = secondary on every local spawn, log shows
+   "spawns with secondary ... (slot held ...)" so the respawn path is confirmed.
+9. **Custom maps: green lighting and ash "snow".** Packages keep Desecration's area resources lp1map doesn't replace:
+   - Ash: tool\scheduler\Effect\aArea_ONLINE_00_Efc0_360 (PlanetEffectVFR weather: mpEffectList ->
+     online00_fallout / _fs1-6, rain_rate, mWaterExist / mWaterHeight, also lensf, HemiSphereLight). Not touched by
+     lp2light. Fix: lp1map neutralises it (no weather effect lists, rain 0, no water) or empties the fallout lists.
+   - Green: lp2light keeps the filter's ColorCorrectFilter tone curves (kind 14, not dumped yet), corrector factors,
+     bloom / sky. Also still Desecration's: sa\DX9|DX11\...\Area_ONLINE_00\package.arc, detail .tde, EnvMap cubemaps,
+     MaterialSkipList. Check: dump the curves, compare a screenshot; trace_opens on a custom-map load for the full list.
+   - 2026-10-22 ash/water: lp2light.effects() zeroes mWeatherRate (online00: 50) + mWaterExist in *_Efc*
+     schedulers; lp1map passes them. Area921.zip + Battlegrounds.zip patched in place (arcput), installed; originals
+     in lp2-assets/maps/pre-fxfix/. UNTESTED. Note: Weather rule in Create Match may still override mWeatherRate.
+10. **Deep snow (idea for custom maps).** Ground materials in the exe (DX9 strings ~0xf5f3xx-0xf5f4fc): ... GAREKI,
+    JUNGLE, BINIIRU, TOTAN, TAINAI, MOKUZOU, NET_MUD, NET_GRASS, WATER_INSIDE, HAVOK_FENCE, LAVA, BRICK,
+    SAND_MIX_ROCK, SOIL, WOOD, WATER, ICE, SNOW, GLASS, NET_SAND, METAL, CONCRETE, DEEP_SNOW. Likely the collision
+    surface's material (lp2col/sbc surface flags 0x8000xxxx material bits) -> sinking. Confirm on a snowy campaign
+    area's rCollision (surface flag values vs this list); then lp2col / Blender can tag DEEP_SNOW faces.
+11. **Water for custom maps (user: LP1 maps with water / underwater areas).** Water = one plane per area in the Efc
+    scheduler: mWaterExist + mWaterHeight (cm). Stock: 00/06/11 h 0, 05 h -230, 01 -500000 / 03 -50000 (= none),
+    08 +500000 (all underwater), 07/09/10/12/15 none. Visuals in the area arc (online00: o00water / o00water2 rModel,
+    on00_suimen rSwingModel, on00_water rScheduler, online_water rEffect2D, area4_UnderWater0, MT_Water, In_Water_amb).
+    Plan: map setting "water": height -> mWaterExist 1 + height (absent = off, as now); visible surface mesh with a stock
+    water material (Blender plane or flat plane at the level); collision faces tagged WATER (cf. DEEP_SNOW, 10).
+    One level per area (multi-level LP1 maps: compromise or find a per-zone setting). lp2light.tracks fails on
+    online 02 / 04 Efc schedulers (string table) - fix.
+12. **Map volumes (user, map builder).** One volume system for custom maps: boxes (later convex shapes) placed in
+    Blender / the map builder, exported with the layout, each with a type: kill, damage (rate), T-ENG refill (rate),
+    water (you count as underwater inside it). The DLL tests the players against them (host decides kills / damage
+    online). Water volumes: find where the game compares a position with mWaterHeight (player swim / underwater
+    state, camera underwater filter, effects) and hook it so a volume answers "underwater" with its top as the
+    surface. Then more than one water level per map works too (11).
+   - 2026-10-22 green root cause: the variable arc (arcXmlTmpPC/variable/*_v.arc) has its own Light0-3 / Filter0-3 /
+     Efc0-3 copies, the ones the game uses; lp1map only wrote the main arc, so online00's green tone curves
+     (R 0,.11,.24,.73 / B 0,.09,.41,.76) + green bloom stayed. lp1map now writes both; Area921 / Battlegrounds patched
+     (all 8 copies of each). Desecration's water planes (o00water/o00water2) were leftovers -> stubbed. LP1 s921
+     has no water data at all (only fog in s921env).
+13. **Per-map water / lava / data posts (user 2026-10-22).** Blends in lp2-assets/lp1/blend_maps now use the map names.
+    Water wanted: Lost Coast, Island (902), Ruins (landing craft at the base). Crimson River: no water, lava floes
+    (later: kill on-foot players inside, heavy fast VS damage = a damage volume, 12). Lost Technology (s905) had its
+    own data posts: s905 has om7105 / om7106 (+ efm_OM 5002 / 5003 effects) where every other LP1 stage has the
+    standard om7100 / om7103. Plan: find how LP2 picks the data post model (ObjSet entry vs a fixed path), port
+    om7105 via lp1model, and add a map setting "post model" (custom data posts per map, also for the GUI editor).
+   - 2026-10-22 (2) still green after the _v fix: ModCache was fresh and every scheduler / texture / vertex colour /
+     CM cube was neutral. Remaining suspect = online00's atmosphere (mpAreaLScattering: Mie 100, density 0.7,
+     Rayleigh 10.4,10.5,13 = blue least scattered) over a far bigger map: the sky and distant cliffs are flat green
+     like fog. lp2light now sets online01's clear-sky scattering (SCATTER; --keep-atmosphere); packages patched.
+     Untested. Shot 3 still showed a bright water strip: on00_suimen (rSwingModel) not stubbed yet, or LP1 geometry.

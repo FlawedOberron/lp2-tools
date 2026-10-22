@@ -9,7 +9,8 @@ from it. The package is stock online map 00 (Desecration) with everything map-sp
   collision                lp2col.py (atari = movement, tama = bullets)
   physics (grenades...)    lp2havok.py
   spawns, VS, weapons      lp1points.py + lp2layout.py --lp1-vs, or --layout (Blender LP2 Map Markers export)
-  light, sky, intro camera lp2light.py (static daylight; --sun etc.)
+  light, sky, intro camera lp2light.py (static daylight; --sun etc.; no weather or water; written to both
+                           the main and variable arcs, whose copies the game uses); Desecration water planes stubbed
   occluders                emptied (map 00's would cull the new geometry)
   resource paths           arcsub.py 'scr\\Online\\online00\\' -> 'scr\\Online\\<tag>\\' so the game's
                            path-keyed cache never mixes it up with Desecration or another ported map
@@ -220,6 +221,9 @@ def main():
         tool("lp2stage.py", "--template", tmpl["online00"], "--out", stage, "--tex-dir", STAGE_DIR, "--light", "0.5",
              *sum((["--empty", s] for s in STUBS), []), *models)
         build_scr(A["scr"], stage, A["scr"])
+        # Desecration's water planes (effect models, its spots only) -> the stub; water is a map setting
+        stub = os.path.join(stage, STUBS[-1] + ".rModel")
+        put(A["main"], {"\\o00water.rModel": stub, "\\o00water2.rModel": stub})
 
         for k, arc in A.items():  # own resource paths
             tool("arcsub.py", arc, arc + ".new", r"scr\\online\\online00\\", "scr\\\\Online\\\\%s\\\\" % tag)
@@ -271,7 +275,7 @@ def main():
         for cls, items in stock["main"].items():
             for nm, data in items:
                 b = base(nm)
-                if (cls == "rScheduler" and ("_Light" in b or "_filter" in b.lower() or b == "online00_cam")) \
+                if (cls == "rScheduler" and ("_Light" in b or "_filter" in b.lower() or "_Efc" in b or b == "online00_cam")) \
                         or cls == "rSceneBox2":
                     open(os.path.join(li, b + "." + cls), "wb").write(data)
         json.dump(camera(floor), open(W("cam.json"), "w"))
@@ -279,7 +283,11 @@ def main():
         bounds = f"{lo_[0] - 500:.0f},{lo_[2] - 500:.0f},{hi_[0] + 500:.0f},{hi_[2] + 500:.0f}"
         tool("lp2light.py", "--sun", a.sun, "--tint", a.tint, "--bounds", bounds, "--cam", W("cam.json"),
              "--sky", a.sky, "--bloom", a.bloom, "--curves", a.curves, li, lo)
-        put(A["main"], {f.rsplit(".", 1)[0] + "." + f.rsplit(".", 1)[1]: os.path.join(lo, f) for f in os.listdir(lo)})
+        # the variable arc carries its own copies of the schedulers (the ones the game uses): both get them
+        out = {f: os.path.join(lo, f) for f in os.listdir(lo)}
+        put(A["main"], out)
+        in_v = {base(nm).lower() + "." + cls for cls, items in stock["v"].items() for nm, _ in items}
+        put(A["v"], {f: p for f, p in out.items() if f.lower() in in_v})
 
         json.dump(dict(name=a.name, base=0, number=0, size=a.size), open(os.path.join(pkg, "map.json"), "w"), indent=1)
         if a.thumb:

@@ -156,3 +156,25 @@ uIdBattle / SprLayout ranking00) -> lives left / ELIMINATED red, FFA first; 2 te
   have only Tool\AI\Pef_Hm40, no navmesh -> no bots there; system link would also need networked AI.
 - Plan: RE LNV + WAY, view in Blender, generate from lp2col walkable collision (map builder), then a bot area
   per package (clone TUTOREAL_51 refs + generated mesh) and extra rows/indices in the bot menu.
+- Navmesh RE (in progress): WAY v16 (reader DX9 6dc6d0) = n x {u32 id, 3f pos, u32 na, u32 nb, na u32 (Train_26: 1 value
+  e.g. 0xc03ac03a / 0xffffffff, meaning?), nb u32, nb u32, u8 type (1: +16 B, 2: +80 B)}, then u32 0, u32 n, u8 depth 5,
+  u32 341 cells, 6f bbox (max, min), cells {u32 k, k x (u32 point, u32 0)} (points only in the 16x16 leaves).
+  LNV v9 (reader 6ddea0, mesh 7548a0): u8 meshes; per mesh str path, str name (u32 len + chars + NUL), u16, u8, u8,
+  u8 k + k B, u32 nv + vec3s (0 here), then: str name, u32 NV, u32 NP, u32 NX, NV x 3f, NP polys {u32 id, u32 n +
+  n u32 (1: 0x02000000 flags?), u8, 3f, f32, u8 n + n u32, u32 n + n u32 (3 vertex ids), u32 n + n x {u32 poly, u32,
+  u32 edge, f32 cost}}; then an area tree (7 nodes "root" / "area_aabb", 180 KB) before the poly quadtree: TODO.
+- User idea: map.json flag "navmesh": true -> package shows in the bot menu.
+- 2026-10-22: Unlimited Ammo + Unlimited Grenades merged into one "Infinite" row (rules 0x2f bits: 1 ammo, 2 grenades;
+  old 0x30 migrated then cleared). 0x30 + Settings 2 slot free for "Radar Behaviour" (user, later): Normal, Show
+  Moving and Shooting, Show Shooting, Show None, Hide.
+- 2026-10-22 navmesh steps 1-2 DONE: lp2nav.py reads/writes LNV + WAY (all 5 stock pairs round-trip byte-identical;
+  format in its docstring; area tree reader DX9 759940). blender_lp2nav.py imports into a map .blend; Train_26 overlays
+  ONLINE_12 exactly (floor triangles coplanar with the map's floor). Open: WAY per-point u32 (cover?), poly flag bits
+  (0x400/0x800/0x40000/0x2000000), LNV area_tail second u16, quadtree cell entry 2nd u32 (0 in WAY).
+
+## Update check + auto-updater (user, 2026-10-22; later)
+- The DLL checks for a newer release on start (GitHub releases of FlawedOberron/xlive-steamworks-lp2, the
+  latest tag vs the built-in version) and tells the player in game (title screen / lobby).
+- An auto-updater that runs inline to the game: download the release zip, swap xlive.dll (can't replace the
+  loaded DLL in place: stage it as xlive.dll.new + rename on next start, or a small launcher step), keep
+  xlive_steamworks.json settings. Needs a version stamp in the build and in the release tags.

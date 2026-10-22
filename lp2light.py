@@ -6,6 +6,8 @@
 IN_DIR: the stock files as NAME.rScheduler (tool\\scheduler\\Light\\*_LightN_windows, Filter\\*_filterN_windows)
 and NAME.rSceneBox2. Written to OUT_DIR under the same names.
 --sun: direction towards the sun (Y up; e.g. from the baked vertex light). --tint: multiplies the sun colour.
+The sun (OBJ_Light), ambient (mpAmbientLight) and hemisphere (HemiSphereLight) colours become grey of the same
+brightness first (online00: yellow sun + cyan fill read as green); --keep-colours keeps them.
 
 rScheduler ('SDL\\0' v0x14): u16 track count at 6, u32 string table offset at 0x14, tracks x 24 B from 0x30:
   u8 kind (2 object, 5 pointer object, 6 int, 7 vector, 8 float, 9 bool), u8 value type (0x14 vec3,
@@ -16,8 +18,11 @@ first (day) one here, then:
   the directional sun (OBJ_Light mDir) and LightSpaceShadow mLightDir -> --sun; the other directional lights
   (HM_Light mDir) turn with the sun; the filter's scattering sun (mSunDir, the direction light travels) -> -sun;
   OBJ_Light mColor x --tint; spot lights (PL_SpotLight, placed for the stock map) mColor -> 0.
+  The atmosphere (mpAreaLScattering Rayleigh / Mie / density) -> online01's clear sky (--keep-atmosphere keeps it).
   Optional filter overrides: --sky (mpAreaLScattering mSunColor: the sky's tint), --bloom (mBloomColor),
   --curves (ColorCorrectFilter mToneCurveR/G/B, kind 14: 4 f32 curve points).
+Effect schedulers (tool\\scheduler\\Effect\\*_EfcN_*): weather (mWeatherRate, int; online00 50 = its falling
+ash) and the water plane (mWaterExist, bool) are switched off; values are u32 per key.
 --cam: the start (intro) camera, event_LP2\\rt_online\\onlineNN_cam.rScheduler (EventMotionCamera): its
 mOffsetPos (camera position) and mTrackTarget (look-at) keys <- {"cam": [[x, y, z], ...], "tgt": [...]},
 one entry per stock key (online00: 4 keys over 90 frames).
@@ -68,7 +73,30 @@ def put_all(b, t, value):
         struct.pack_into("<3f", b, t["v"] + 16 * j, *map(float, value))
 
 
-def light(b, sun, tint):
+NEUTRAL = {("OBJ_Light", "mColor"), ("HemiSphereLight", "mColor"), ("HemiSphereLight", "mRevColor"),
+           ("mpAmbientLight", "mColor")}
+
+
+def grey(c):
+    """The same brightness without the hue (Rec. 709 luminance)."""
+    return np.full(3, 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2])
+
+
+def neutral(b):
+    """Sun, ambient and hemisphere colours -> grey (online00's: yellow sun + cyan fill = a green cast)."""
+    b = bytearray(b)
+    done = []
+    for t in tracks(b):
+        if t["kind"] == 7 and t["keys"] and (t["obj"], t["name"]) in NEUTRAL:
+            for j in range(t["keys"]):
+                struct.pack_into("<3f", b, t["v"] + 16 * j, *map(float, grey(vec(b, t, j))))
+            done.append(f"{t['obj']}.{t['name']}")
+    return bytes(b), done
+
+
+def light(b, sun, tint, keep_colours=False):
+    if not keep_colours:
+        b = neutral(b)[0]
     b = bytearray(b)
     T = tracks(b)
     sun_track = next(t for t in T if t["obj"] == "OBJ_Light" and t["name"] == "mDir")
@@ -96,10 +124,23 @@ def light(b, sun, tint):
     return bytes(b), changed
 
 
-def filt(b, sun, sky=None, bloom=None, curves=None):
+# Atmosphere (mpAreaLScattering) from stock online01's day: a clear blue sky. online00's (Mie 100, density 0.7,
+# blue scattered least) is a thick haze that, over a big ported map, tints the whole frame (sky and characters) green.
+SCATTER = {"mRaylieghScattering": (17.0, 14.8, 13.9), "mMeiScattering": (2.94, 2.95, 3.0),
+           "mMeiDirective": -0.1, "mDensity": 0.53}
+
+
+def filt(b, sun, sky=None, bloom=None, curves=None, scatter=SCATTER):
     b = bytearray(b)
     for t in tracks(b):
-        if t["kind"] == 14 and curves and t["name"] in curves:  # tone curve: 4 f32 points
+        if t["obj"] == "mpAreaLScattering" and scatter and t["name"] in scatter and t["keys"]:
+            v = scatter[t["name"]]
+            for j in range(t["keys"]):
+                if t["kind"] == 7:
+                    struct.pack_into("<3f", b, t["v"] + 16 * j, *v)
+                else:
+                    struct.pack_into("<f", b, t["v"] + 4 * j, v)
+        elif t["kind"] == 14 and curves and t["name"] in curves:  # tone curve: 4 f32 points
             struct.pack_into("<4f", b, t["v"], *curves[t["name"]])
         elif t["kind"] == 7 and t["keys"] >= 1:
             value = vec(b, t)
@@ -144,15 +185,29 @@ def camera(b, cam):
     return bytes(b)
 
 
+def effects(b):
+    """No weather (online00's falling ash) and no water plane: mWeatherRate and mWaterExist keys -> 0."""
+    b = bytearray(b)
+    done = []
+    for t in tracks(b):
+        if t["name"] in ("mWeatherRate", "mWaterExist") and t["keys"]:
+            for j in range(t["keys"]):
+                struct.pack_into("<I", b, t["v"] + 4 * j, 0)
+            done.append(t["name"])
+    return bytes(b), done
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--sun", required=True)
     ap.add_argument("--tint", default="1,1,1")
+    ap.add_argument("--keep-colours", action="store_true", help="keep the stock sun / ambient hues (default: grey)")
     ap.add_argument("--bounds")
     ap.add_argument("--zone", type=int)
     ap.add_argument("--cam")
     ap.add_argument("--sky", help="scattering sun colour R,G,B (sky tint; online00 day: 10,9.02,4 = yellow)")
     ap.add_argument("--bloom", help="bloom colour R,G,B")
+    ap.add_argument("--keep-atmosphere", action="store_true", help="keep the stock scattering (default: online01's clear sky)")
     ap.add_argument("--curves", help="tone curves 'R:a,b,c,d;G:...;B:...' (4 points each; online00 grades green)")
     ap.add_argument("src")
     ap.add_argument("dst")
@@ -168,10 +223,13 @@ def main():
         b = open(os.path.join(a.src, f), "rb").read()
         low = f.lower()
         if low.endswith(".rscheduler") and "_light" in low:
-            out, changed = light(b, sun, tint)
+            out, changed = light(b, sun, tint, a.keep_colours)
             note = f"{sum(changed.values())} vector tracks"
         elif low.endswith(".rscheduler") and "_filter" in low:
-            out, note = filt(b, sun, sky, bloom, curves), "filter"
+            out, note = filt(b, sun, sky, bloom, curves, None if a.keep_atmosphere else SCATTER), "filter"
+        elif low.endswith(".rscheduler") and "_efc" in low:
+            out, done = effects(b)
+            note = "effects: " + (", ".join(done) + " off" if done else "nothing to change")
         elif low.endswith("_cam.rscheduler"):
             if not a.cam:
                 continue
