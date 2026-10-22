@@ -145,3 +145,14 @@ uIdBattle / SprLayout ranking00) -> lives left / ELIMINATED red, FFA first; 2 te
 - Updater ecbd70 (cockpit this): kind==5 -> +0x1e70 = results(0x1842198)+0x197c (red kills), +0x1e74 = +0x1980 (blue); calls ebf710 (setKillRed, kills + target 0x181fc60[setup+0x4c]) / ebf850 (Blue) / ebf990/ebfad0 (First*).
 - mc_TEAM (id755 top bar, setTeamGauge ebb1a0, from results+0x107c/+0x1080 via ec63d0) shows for kinds 4/7 (incl. Team Elimination); hidden by our TeamBar detour while Team Survival is on.
 - Native list ec4df0 returns at once for team kinds (fe8c70: kind 0 or 4..11) -> free to draw our own native text rows there (sprintf + 80ead0 like the FFA list).
+
+## Bots on every map: findings (2026-10-22)
+- AI Enemy Battle map row = menu +0x19c (0-4), game type +0x198 (0-4); records [phase][rule][map] at 7d81f0 (DX9);
+  picture = Flash frame `stageImage` (f35f90), so the menu's art is fixed per index.
+- Each bot match is its own area: aArea_TUTOREAL_51..75 (5 per map): 51-55 / 61-65 ONLINE_12, 56-60 ONLINE_10,
+  66-70 ONLINE_01, 71-75 ONLINE_09 (26-50 the same maps for the other training screens).
+- Bots need `tool\AI\NaviMesh\Train_NN\List_Train_NN.rAINavigationMeshList` (magic LNV, v9, ~500 KB) and
+  `Way_Train_NN.rAIWayPoint` (magic WAY, v16, 0x4f5 points in Train_26). Online areas (and so map packages)
+  have only Tool\AI\Pef_Hm40, no navmesh -> no bots there; system link would also need networked AI.
+- Plan: RE LNV + WAY, view in Blender, generate from lp2col walkable collision (map builder), then a bot area
+  per package (clone TUTOREAL_51 refs + generated mesh) and extra rows/indices in the bot menu.
