@@ -166,6 +166,16 @@ havok mesh like the collision, plus other maps' pieces' tama). Fixed: other maps
   [preview]). Right-click a light = settings popup. Next: "Preview In Game": export + install + launch, the DLL reads a
   one-shot request (map, mode, start point) and drives the menus into an offline match on it (needs RE of the
   menu / session start; AI Enemy Battle menu +0x19c map row is a lead, see requests-mp-menu.md).
+- NEXT, high priority (user 2026-10-23), before the steps below:
+  A. Haze / fog settings in the Lighting window: the Filter scheduler's fog (distance fog colour / start / end /
+     density, height fog if the stock maps have it: check the uHazeFilter / uNoiseFogFilter / uVolumeNoiseFilter
+     classes and the Filter0-3 tracks of every stock map), with presets from stock maps like the light presets.
+  B. In-game-accurate preview: make the editor viewport look as close to the game as we can: the game's
+     tone curves (ColorCorrectFilter mToneCurve), bloom, scattering haze (mpAreaLScattering Rayleigh / Mie /
+     density / sun colour), fog, the sun / hemisphere / ambient model (LP2's shader maths: MT Framework
+     lighting), the sky dome as the game draws it, LP2 material maps (normal / mask / specular) and the
+     baked stage light. Goal: what you see in the editor = the game, including the green-tint class of bugs
+     (Area 921 Lit came out green and with the Desecration windmill: investigate in the same pass).
 4. Overrides: replace a map object's model (data posts: om7100 rModel in the map package, if the map's resources
    win over the global uOm arc) and per-placed-VS texture overrides (VS arcs are global: needs the DLL to swap
    textures per instance, or a cloned VS type id per skin).
