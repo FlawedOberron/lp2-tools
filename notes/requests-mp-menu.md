@@ -178,3 +178,9 @@ uIdBattle / SprLayout ranking00) -> lives left / ELIMINATED red, FFA first; 2 te
 - An auto-updater that runs inline to the game: download the release zip, swap xlive.dll (can't replace the
   loaded DLL in place: stage it as xlive.dll.new + rename on next start, or a small launcher step), keep
   xlive_steamworks.json settings. Needs a version stamp in the build and in the release tags.
+
+## Faster part / map transfer (user, 2026-10-22; later)
+- Custom part sets (and map packages) download slowly between players in the lobby (seen ~24 s for one set,
+  throttled). Look at: the per-packet size / send rate cap in the transfer, compressing (rTextures dominate;
+  zlib / shared DXT), sending several chunks in flight, skipping what the peer already has (hash cache),
+  and starting transfers as soon as a player joins instead of on demand.

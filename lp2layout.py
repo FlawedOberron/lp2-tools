@@ -4,7 +4,8 @@
   lp2layout.py [--lp1-vs] POINTS.json IN_DIR OUT_DIR
 
 Authored layouts (Blender lp2_map_markers export, "lp2": true): every marker carries its LP2 item id, tier
-(objset +0x04: 0 / 10 / 20, the match's VS / weapon amount setting) and game types ("modes": team, slayer,
+(objset +0x04 controlStatus: 0 / 10 / 20; stock values kept unless a marker gives one), "item" on LP1-layout weapons (explicit pickup id, else the stock record's), "dig" / "dig_pile" (buried:
+digs to uncover, pile model 0-2; see put_dig) and game types ("modes": team, slayer,
 fox, datapost, counter, egg, vs; from the file name: TeamBattle/Team, KojinBattle/Slayer, FoxBattle/Fox,
 ...); a file gets only its mode's markers. VS, weapon and post groups are then exactly the markers
 (records cloned from stock ones, any count), VS weapon mounts included. Spawn counts stay the stock ones
@@ -82,12 +83,22 @@ def is_post(rec):
     return rec[0x19] == 6 and rec[0x1A] == 0x71  # om71xx data posts
 
 
+def put_dig(rec, q):
+    """buried ("dig here" pile): mUserData[2..5] (+0x7c pile model, +0x80 digs to uncover, +0x84 / +0x88 sink depth
+    and pile height, 0 = the game's defaults), read by uWeapon / uVitalSuit::vf5 as mUserWork[2..5]. Stock records
+    carry their own (Desecration has 50 buried items): a copy must not bury what the layout doesn't."""
+    n = int(q.get("dig", 0))
+    struct.pack_into("<4I", rec, 0x7C, int(q.get("dig_pile", 0)) if n else 0, n, 0, 0)
+
+
 def put_object(rec, q, g):
     struct.pack_into("<3f", rec, 0x40, *q["pos"])
     struct.pack_into("<f", rec, 0x54, q["yaw"])
     struct.pack_into("<H", rec, 0x1A, q["item"])
     if "tier" in q:
         struct.pack_into("<I", rec, 0x04, q["tier"])
+    if g in (1, 4):
+        put_dig(rec, q)
     if g == 1 and "weapons" in q:  # 4 mounts x 5 B at 0x120: u8 on, u8 4 (weapon), u16 id, u8 0
         for i, (on, wid) in enumerate(q["weapons"][:4]):
             struct.pack_into("<BBHB", rec, 0x120 + 5 * i, on, 4, wid, 0)
@@ -156,6 +167,10 @@ def patch_objset(b, lay, lp1_vs=False):
                 q = src[g][i]
                 struct.pack_into("<3f", rec, 0x40, *q["pos"])
                 struct.pack_into("<f", rec, 0x54, q["yaw"])  # rot y
+                if g in (1, 4):
+                    put_dig(rec, q)
+                if g == 4 and "item" in q:  # explicit pickup (editor): this weapon whatever the loadout / stock record
+                    struct.pack_into("<H", rec, 0x1A, int(q["item"]))
                 if g == 1 and lp1_vs:
                     struct.pack_into("<H", rec, 0x1A, int(q["model"][2:], 16))  # LP2 VS type = LP1 id
             out += rec
@@ -168,6 +183,7 @@ def patch_objset(b, lay, lp1_vs=False):
                 struct.pack_into("<3f", rec, 0x40, *q["pos"])
                 struct.pack_into("<f", rec, 0x54, q["yaw"])
                 struct.pack_into("<H", rec, 0x1A, int(q["model"][2:], 16))
+                put_dig(rec, q)
                 struct.pack_into("<I", rec, 0x110, kept)
                 out += rec
                 kept += 1

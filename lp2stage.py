@@ -43,6 +43,12 @@ def tex_rgba(path):
     t = lp1tex.read_tex(open(path, "rb").read())
     if t.get("rgba") is not None:
         return np.frombuffer(t["rgba"], np.uint8).reshape(t["h"], t["w"], 4)
+    code = struct.unpack("<I", t["fourcc"])[0] if t.get("fourcc") else 0
+    if code in (21, 22):  # PC: D3DFMT A8R8G8B8 / X8R8G8B8 (BGRA bytes) instead of a DXT FourCC
+        img = np.frombuffer(t["data"], np.uint8, t["w"] * t["h"] * 4).reshape(t["h"], t["w"], 4)[..., [2, 1, 0, 3]].copy()
+        if code == 22:
+            img[..., 3] = 255
+        return img
     return np.asarray(Image.open(io.BytesIO(lp1tex.to_dds(t))).convert("RGBA"))
 
 
@@ -54,6 +60,80 @@ def pot(img):
         return img
     from PIL import Image
     return np.asarray(Image.fromarray(img).resize((W, H)))
+
+
+def write_stage(dst, textures, materials, meshes):
+    """Write a static stage rModel. meshes: [dict(mat, verts (n, 28) u8 rows (or a list of 28 B), tris [(a, b, c)])]"""
+    meshes = [dict(mat=m["mat"], verts=np.frombuffer(b"".join(m["verts"]), np.uint8).reshape(-1, STRIDE)
+                   if isinstance(m["verts"], list) else np.asarray(m["verts"], np.uint8),
+                   tris=np.asarray(m["tris"], np.int64).reshape(-1, 3)) for m in meshes]
+    meshes = [m for m in meshes if len(m["tris"])]
+    for m in meshes:
+        p = m["verts"][:, :12].copy().view("<f4").reshape(-1, 3)
+        m["lo"], m["hi"] = p.min(0).astype(np.float64), p.max(0).astype(np.float64)
+    # windows of <= 65535 vertices; a mesh too big for one window is split by triangles
+    parts = []
+    for m in meshes:
+        if len(m["verts"]) <= 65535:
+            parts.append(m)
+            continue
+        cur, rm = [], {}
+        for t in m["tris"].tolist() + [None]:
+            if t is None or len(rm) + 3 > 65535:
+                vs = sorted(rm, key=rm.get)
+                parts.append(dict(m, verts=m["verts"][vs], tris=np.array([[rm[i] for i in tt] for tt in cur], np.int64).reshape(-1, 3)))
+                cur, rm = [], {}
+                if t is None:
+                    break
+            for i in t:
+                rm.setdefault(i, len(rm))
+            cur.append(t)
+    if len(parts) > 4095:
+        raise ValueError(f"{len(parts)} meshes: a stage model holds at most 4095 (12-bit group ids)")
+    vb, ib, recs = bytearray(), bytearray(), []
+    win_off, win_n, total = 0, 0, 0
+    for k, m in enumerate(parts):
+        n = len(m["verts"])
+        if win_n + n > 65535:
+            win_off, win_n = total * STRIDE, 0
+        vstart = win_n
+        vb += m["verts"].tobytes()
+        istart = len(ib) // 2
+        ib += (m["tris"] + vstart).astype("<u2").tobytes()
+        recs.append(dict(m, vstart=vstart, voff=win_off, istart=istart, icount=len(m["tris"]) * 3))
+        win_n += n
+        total += n
+
+    lo = np.min([m["lo"] for m in parts], 0)
+    hi = np.max([m["hi"] for m in parts], 0)
+    centre, radius = (lo + hi) / 2, float(np.linalg.norm(hi - lo) / 2)
+    groups = b"".join(struct.pack("<I12x4f", k + 1, *((m["lo"] + m["hi"]) / 2), float(np.linalg.norm(m["hi"] - m["lo"]) / 2))
+                      for k, m in enumerate(recs))
+    tex_block = b"".join(struct.pack("<64s", t.encode()) for t in textures)
+    mat_block = b"".join(materials)
+    mesh_block = bytearray()
+    for k, m in enumerate(recs):
+        n = len(m["verts"])
+        mesh_block += struct.pack("<HHIBBBBIIIIIIBBHHHI", 0xFDF7, n, (k + 1) | m["mat"] << 12 | 0xFF << 24, 1, 0, STRIDE, 3,
+                                  m["vstart"], m["voff"], FMT, m["istart"], m["icount"], 0, 1, 0, k + 1,
+                                  m["vstart"], m["vstart"] + n - 1, 0)
+    boxes = bytearray(struct.pack("<I", len(recs)))
+    for m in recs:
+        c, h = (m["lo"] + m["hi"]) / 2, (m["hi"] - m["lo"]) / 2
+        boxes += struct.pack("<I12x4f4f4f16f4f", 255, *c, float(np.linalg.norm(h)), *m["lo"], 0.0, *m["hi"], 0.0,
+                             1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, *c, 1.0, *h, 0.0)
+    o_grp = 0x80
+    o_tex = o_grp + len(groups)
+    o_mesh = o_tex + len(tex_block) + len(mat_block)
+    o_vb = o_mesh + len(mesh_block) + len(boxes)
+    o_ib = o_vb + len(vb)
+    head = struct.pack("<4sHHHH13I", b"MOD\0", 0xC5, 0, len(recs), len(materials), total, len(ib) // 2,
+                       len(ib) // 6, len(vb), len(textures), len(recs), 0, o_grp, o_tex, o_mesh, o_vb, o_ib, 0)
+    head += struct.pack("<4f4f4f4I", *centre, radius, *lo, 0.0, *hi, 0.0, 1000, 3000, 1, 0)
+    assert len(head) == 0x80
+    data = head + groups + tex_block + mat_block + mesh_block + boxes + vb + ib
+    open(dst, "wb").write(data)
+    return data
 
 
 def main():
@@ -89,6 +169,11 @@ def main():
                 img[...] = (128, 128, 255, 255) if kind == "nm" else (0, 0, 0, 255)
             else:
                 img = pot(tex_rgba(src_path))
+                if kind == "bm" and img[..., 3].max() < 8:
+                    # alpha zero everywhere is not transparency (LP1 keeps a mask there, e.g. most of s900's
+                    # colour maps): opaque, so DXT1 and nothing for the game to cut away
+                    img = img.copy()
+                    img[..., 3] = 255
             open(os.path.join(out_dir, name + ".rTexture"), "wb").write(lp2tex.encode(img, kind))
             textures.append(full)
             tex_index[full] = len(textures)
@@ -104,7 +189,8 @@ def main():
         tex_off = struct.unpack_from(E + "I", b, 0x34)[0]
         mo = tex_off + len(M["texs"]) * 64
         texp = [lp1model.find_tex(path, t) for t in M["texs"]]
-        for m in M["meshes"]:
+        for mi, m in enumerate(M["meshes"]):
+            print(f"@progress {(mi + 1) / len(M['meshes']):.3f} {os.path.basename(path).split('.')[0]}: meshes and lightmaps", flush=True)
             w = struct.unpack_from(E + "40I", b, mo + m["mat"] * 160)
             slot = lambda j: w[j] - 1 if 0 < w[j] <= len(texp) and texp[w[j] - 1] else None
             if not m["lodmask"] & 1 or slot(6) is None:
@@ -149,68 +235,10 @@ def main():
                                lo=pts.min(0), hi=pts.max(0)))
         print(f"{os.path.basename(path)}: {len(meshes)} meshes so far, {len(textures)} textures")
 
-    # windows of <= 65535 vertices; a mesh too big for one window is split by triangles
-    parts = []
-    for m in meshes:
-        if len(m["verts"]) <= 65535:
-            parts.append(m)
-            continue
-        cur, rm = [], {}
-        for t in m["tris"] + [None]:
-            if t is None or len(rm) + 3 > 65535:
-                vs = sorted(rm, key=rm.get)
-                parts.append(dict(m, verts=[m["verts"][v] for v in vs], tris=[tuple(rm[i] for i in tt) for tt in cur]))
-                cur, rm = [], {}
-                if t is None:
-                    break
-            for i in t:
-                rm.setdefault(i, len(rm))
-            cur.append(t)
-    vb, ib, recs = bytearray(), bytearray(), []
-    win_off, win_n, total = 0, 0, 0
-    for k, m in enumerate(parts):
-        n = len(m["verts"])
-        if win_n + n > 65535:
-            win_off, win_n = total * STRIDE, 0
-        vstart = win_n
-        vb += b"".join(m["verts"])
-        istart = len(ib) // 2
-        for t in m["tris"]:
-            ib += struct.pack("<3H", *(vstart + i for i in t))
-        recs.append(dict(m, vstart=vstart, voff=win_off, istart=istart, icount=len(m["tris"]) * 3))
-        win_n += n
-        total += n
-
-    lo = np.min([m["lo"] for m in parts], 0)
-    hi = np.max([m["hi"] for m in parts], 0)
-    centre, radius = (lo + hi) / 2, float(np.linalg.norm(hi - lo) / 2)
-    groups = b"".join(struct.pack("<I12x4f", k + 1, *((m["lo"] + m["hi"]) / 2), float(np.linalg.norm(m["hi"] - m["lo"]) / 2))
-                      for k, m in enumerate(recs))
-    tex_block = b"".join(struct.pack("<64s", t.encode()) for t in textures)
-    mat_block = b"".join(materials)
-    mesh_block = bytearray()
-    for k, m in enumerate(recs):
-        n = len(m["verts"])
-        mesh_block += struct.pack("<HHIBBBBIIIIIIBBHHHI", 0xFDF7, n, (k + 1) | m["mat"] << 12 | 0xFF << 24, 1, 0, STRIDE, 3,
-                                  m["vstart"], m["voff"], FMT, m["istart"], m["icount"], 0, 1, 0, k + 1,
-                                  m["vstart"], m["vstart"] + n - 1, 0)
-    boxes = bytearray(struct.pack("<I", len(recs)))
-    for m in recs:
-        c, h = (m["lo"] + m["hi"]) / 2, (m["hi"] - m["lo"]) / 2
-        boxes += struct.pack("<I12x4f4f4f16f4f", 255, *c, float(np.linalg.norm(h)), *m["lo"], 0.0, *m["hi"], 0.0,
-                             1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, *c, 1.0, *h, 0.0)
-    o_grp = 0x80
-    o_tex = o_grp + len(groups)
-    o_mesh = o_tex + len(tex_block) + len(mat_block)
-    o_vb = o_mesh + len(mesh_block) + len(boxes)
-    o_ib = o_vb + len(vb)
-    head = struct.pack("<4sHHHH13I", b"MOD\0", 0xC5, 0, len(recs), len(materials), total, len(ib) // 2,
-                       len(ib) // 6, len(vb), len(textures), len(recs), 0, o_grp, o_tex, o_mesh, o_vb, o_ib, 0)
-    head += struct.pack("<4f4f4f4I", *centre, radius, *lo, 0.0, *hi, 0.0, 1000, 3000, 1, 0)
-    assert len(head) == 0x80
-    data = head + groups + tex_block + mat_block + mesh_block + boxes + vb + ib
     dst = os.path.join(out_dir, model_name + ".rModel")
-    open(dst, "wb").write(data)
+    data = write_stage(dst, textures, materials, meshes)
+    total = sum(len(m["verts"]) for m in meshes)
+    ntri = sum(len(m["tris"]) for m in meshes)
     for name in a.empty:  # same layout, one 1 mm triangle far below the map, first material
         v = [struct.pack("<3f", x, -100000.0, z) + b"\x7f\xff\x7f\xff" * 2 + struct.pack("<2e", 0, 0) + b"\0\0\0\xff"
              for x, z in ((0, 0), (0.1, 0), (0, 0.1))]
@@ -231,8 +259,8 @@ def main():
         struct.pack_into("<3I", mat, 12, 2, 2, 2)
         open(os.path.join(out_dir, name + ".rModel"), "wb").write(hd + g + tb1 + bytes(mat) + mesh + box + b"".join(v) + struct.pack("<3H", 0, 1, 2))
         print(f"wrote stand-in {name}.rModel")
-    print(f"wrote {dst}: {len(recs)} meshes, {len(materials)} materials, {len(textures)} textures, {total} vertices, "
-          f"{len(ib) // 6} triangles, {len(data) / 1e6:.1f} MB")
+    print(f"wrote {dst}: {len(meshes)} meshes, {len(materials)} materials, {len(textures)} textures, {total} vertices, "
+          f"{ntri} triangles, {len(data) / 1e6:.1f} MB")
 
 
 if __name__ == "__main__":

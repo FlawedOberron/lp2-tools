@@ -3,6 +3,7 @@
 
   mod2obj.py IN.rModel [OUT.obj]       one model
   mod2obj.py -r DIR                    every *.rModel under DIR, .obj written alongside
+  mod2obj.py IN.rModel OUT.obj --pose MOTIONS.rMotionList[:N]   skinned meshes in motion N's first frame
 
 Header: 0x04 u16 version, 0x06 u16 bones, 0x08 u16 meshes, 0x0A u16 materials,
   0x0C vertex count, 0x10 index count, 0x18 vertex buffer size, 0x1C texture count,
@@ -162,9 +163,16 @@ def mesh_geometry(b, m, M):
     return verts, uvs, list(list_tris(idx))
 
 
-def export(src, dst):
+def export(src, dst, motions=None, motion=0):
+    """motions: an rMotionList's bytes: skinned meshes take that motion's first frame (lp2pose), else the bind pose."""
     b = open(src, "rb").read()
     M = read_model(b)
+    mats = None
+    if motions and M["bones"]:
+        import lp2pose
+        ms = lp2pose.motions(motions)
+        if motion < len(ms) and ms[motion]:
+            mats = lp2pose.skin_matrices(read_bones(b)[0], ms[motion])
     mtl = os.path.splitext(dst)[0] + ".mtl"
     out = [f"# {os.path.basename(src)}\nmtllib {os.path.basename(mtl)}\n"]
     nv = nt = skipped = 0
@@ -174,6 +182,12 @@ def export(src, dst):
             skipped += 1
             continue
         verts, uvs, tris = g
+        if mats and m["fmt"] in SKIN:
+            import lp2pose
+            base = M["vb"] + m["voff"]
+            for i, p in verts.items():
+                o = base + (m["vbase"] + i) * m["stride"]
+                verts[i] = lp2pose.pose_point(p, vertex_skin(b[o:o + m["stride"]], SKIN[m["fmt"]]), mats)
         remap, tmap = {}, {}
         out.append(f"o mesh{k:03d}_lod{m['lodmask']:02x}_fmt{m['fmt']:08x}\nusemtl mat{m['mat']:03d}\n")
         for i, p in verts.items():
@@ -271,7 +285,13 @@ def main():
                         bad += 1; print(f"{p}: {e}", file=sys.stderr)
         print(f"exported {ok}, failed {bad}")
     else:
-        M, skipped = export(a[0], a[1] if len(a) > 1 else os.path.splitext(a[0])[0] + ".obj")
+        pose = None
+        if "--pose" in a:  # --pose MOTIONS.rMotionList[:N]
+            k = a.index("--pose")
+            path, _, n = a[k + 1].partition(":")
+            pose = (open(path, "rb").read(), int(n or 0))
+            del a[k:k + 2]
+        M, skipped = export(a[0], a[1] if len(a) > 1 else os.path.splitext(a[0])[0] + ".obj", *(pose or ()))
         print(f"bones {M['bones']} meshes {len(M['meshes'])} materials {len(M['mats'])} skipped {skipped}")
 
 

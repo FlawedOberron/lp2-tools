@@ -102,3 +102,42 @@ the session.
      Rayleigh 10.4,10.5,13 = blue least scattered) over a far bigger map: the sky and distant cliffs are flat green
      like fog. lp2light now sets online01's clear-sky scattering (SCATTER; --keep-atmosphere); packages patched.
      Untested. Shot 3 still showed a bright water strip: on00_suimen (rSwingModel) not stubbed yet, or LP1 geometry.
+
+## 14. Respawning with 0 grenades (reported 2026-10-22)
+User kept respawning with 0 grenades as a non-host client (maybe the host too). Suspect the respawn-secondary
+work (rules.cpp `Spawn` hook: `EB 0E` jump over `mov edi,[esi+0xf0]` at DX9 0x8ebbdc / DX11 0x8fb53c during
+respawn, so slot 7 takes the info-id path). Check whether the skipped code (0x0e bytes) also sets up the
+grenade slot / count, and whether clients run the patched path. Not looked at yet.
+
+## 2026-10-23 decompile pass (dump: Bulk_Mag lp2-decomp/dx9)
+- Resolved earlier (user): #2 mystery meatsuit, #7 / top-list 2 [DL] progress, Snow Bunny skirt chains.
+- #14 0 grenades: NOT our respawn-secondary jump. Spawn (DX9 0x8eb7d0) loops slots 0-7 through a jump table at
+  0x8ec0a4; only slot 7's case is 0x8ebbdc (our EB 0E). On respawn slot 1 (grenades) is the caller's object: uCtrlPlayer
+  ::vf17 calls Spawn(1, ctl+0xdc, ctl+0xe0) and ctl+0xe0 is filled by the pickup step FUN_008e9ec0 (case 2). Null ->
+  the slot is skipped (0 grenades). Counts then come from player info +0x74/+0x64 per slot unless info+0xb.
+  Next: log ctl+0xe0 and the grenade count in our Spawn hook on a client respawn.
+- #3 Survival HUD online: CAUSE. List draw DX9 FUN_00ec4df0 picks the value by game status +0x8174: 1 Battle Gauge
+  (+0x103c, "%d", the sprintf we redirect), 2 Kills (+0x193c, "%03d/%03d" at a SECOND sprintf, or "%03d/-----" at
+  ours when no target), 3 Points (+0x19bc). ListValue only acts when format == "%d", so online Kills (Survival) never
+  matches. Fix: in Survival accept any format at our call site and redirect the "%03d/%03d" call too (check which
+  register holds the array pointer there), DX9 + DX11.
+- #5 digs: CAUSE (very likely). lp2layout copies stock record i's +0x04 ("tier": stock weapons 0, 10, 20 from index
+  ~19 on) into LP1 weapons that carry no tier, so later LP1 weapons get 10 / 20 (buried). Fix: tier 0 when the layout
+  gives none. Confirm in game (Battlegrounds rebuilt).
+- Survival leaking into other sub-types: CAUSE. g_menuSurvival is the create screen's cached state; a System Link
+  lobby at 13:20 on 2026-10-23 ran Team Elimination (Battle Gauge, lobby props mode 1 sub 0) with "survival on (3
+  lives)" logged. Then TeamBar is hidden and the survival end check (rule 4) runs in a Battle Gauge match. Fix: gate
+  g_survival on the match's own settings (session properties 0x10000001 main <= 1 and 0x10000002 sub == Kills, as
+  discord.cpp reads them), and leaving Survival should restore the kill target / respawn it forced.
+- 2026-10-23 implemented (DLL built + installed, backup xlive.dll.pre-2026-10-23; UNTESTED):
+  - #3: second list sprintf redirected (RulesVas.listValue2 DX11 0xed5023 / DX9 0xec5213); ListValueThunk forwards
+    4 values; Survival replaces any format when esi is in the gauge or kills array.
+  - Survival gate: SyncThread drops survival unless the lobby's 0x10000001 <= 1 and 0x10000002 == Kills; RulesStep
+    restores the kill target / respawn when leaving Survival.
+  - Spectating: hides the 6 clips (mc_cockpitLife, mc_WPL, mc_Lockon, mc_NWSE, mc_BattleGauge, mc_TargetScope), not
+    their movies' _root (id755 also has the prompts); re-applied every 250 ms. SpectateHint draws SPECTATING / Fire:
+    next player / Zoom: previous player under the list (team-hud.txt x, y + 17 rows).
+  - #14: Spawn logs each respawn's grenade object (kind, loaded, total) or "no grenade object".
+  - #5: REVISED: +0x04 is controlStatus, not burial (reverted). Real cause: Desecration's buried records (+0x80 dig
+    count) carried into Battlegrounds; lp2layout put_dig clears / sets them (see map-editor-plan.md). Needs a map rebuild.
+  - Self-update: core/update.cpp (release builds: cmake -DXLS_RELEASE_TAG=test-YYYY-MM-DD[x]); "update": {"auto"}.

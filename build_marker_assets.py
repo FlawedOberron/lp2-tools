@@ -7,6 +7,8 @@ and the data posts, as OBJ + DDS, then (blender_marker_assets.py) one lp2_marker
 GAME_DIR: the Lost Planet 2 folder. Each type's archive is nativePC/arcLp2Xml/autoArc/u<Vs|Wp|Om><id>.arc;
 its model = the largest rModel in the type's own folder (model/vs/vsXX/, model/wp/wpXX/, model/om/omXXXX/),
 else the largest one under model/vs|wp|om/ (types that borrow another folder's model, e.g. 0x53 -> vs03).
+VS models are posed in their motion list's motion 0, first frame (lp2pose.py); types where that leaves them more
+than 60 cm under the origin (flying, bosses, a few others) keep the bind pose; any VS still under the origin is lifted so its lowest point is on it.
 Slot weapons (0 KB archives) have no model: the add-on keeps a plain shape for them.
 Writes OUT_DIR/<key>/<model>.obj (+ .mtl, textures as .dds) and OUT_DIR/manifest.json {key: obj path};
 keys: vs_66, wp_42, om_7100.
@@ -36,6 +38,30 @@ def pick_model(data, kind, tag):
         elif low.startswith(f"model\\{kind}\\"):
             other.append((ds, name))
     return max(own or other or [(0, None)])[1]
+
+
+def pick_motions(data, kind):
+    """the archive's own rMotionList (motion/vs/vsXX/vsXX_mot): VS models are posed in its motion 0 (standing idle,
+    the unmanned stance; the bind pose has the origin at the hips, so the model sat half under the floor)."""
+    best = None
+    for name, th, _cs, ds, _fl, _off in arcx.entries(data):
+        if TYPES.get(th) == "rMotionList" and name.lower().startswith(f"motion\\{kind}\\"):
+            best = max(best or (0, None), (ds, name))
+    return best[1] if best else None
+
+
+def lowest(obj):
+    return min((float(l.split()[2]) for l in open(obj) if l.startswith("v ")), default=0.0)
+
+
+def lift(obj, dy):
+    out = []
+    for l in open(obj):
+        if l.startswith("v "):
+            x, y, z = (float(v) for v in l.split()[1:4])
+            l = "v %.5f %.5f %.5f\n" % (x, y + dy, z)
+        out.append(l)
+    open(obj, "w").writelines(out)
 
 
 def extract(arc, out):
@@ -89,7 +115,19 @@ def main():
             os.makedirs(dst, exist_ok=True)
             leaf = model.split("\\")[-1]
             src = os.path.join(tmp, *model.split("\\")) + ".rModel"
-            subprocess.run([sys.executable, os.path.join(HERE, "mod2obj.py"), src, os.path.join(dst, leaf + ".obj")], check=True, capture_output=True)
+            pose = []
+            mot = pick_motions(data, kind) if kind == "vs" else None
+            if mot:
+                pose = ["--pose", os.path.join(tmp, *mot.split("\\")) + ".rMotionList:0"]
+            obj = os.path.join(dst, leaf + ".obj")
+            subprocess.run([sys.executable, os.path.join(HERE, "mod2obj.py"), src, obj] + pose, check=True, capture_output=True)
+            if kind == "vs" and lowest(obj) < -60:
+                # motion 0 isn't a standing idle for this type (flying, bosses, a few odd ones): bind pose, lowest point
+                # on the floor
+                if pose:
+                    subprocess.run([sys.executable, os.path.join(HERE, "mod2obj.py"), src, obj], check=True, capture_output=True)
+            if kind == "vs" and lowest(obj) < 0:  # legs stay straight without the game's IK: feet onto the floor
+                lift(obj, -lowest(obj))
             # copy the textures the MTL names next to the OBJ, rewrite paths to plain names
             mtl = os.path.join(dst, leaf + ".mtl")
             lines = []

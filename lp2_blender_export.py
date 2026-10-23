@@ -13,7 +13,8 @@
 #       <name>_g<NN>         explicit part group NN
 #       hand_<pose>          hand pose: grip, open (both hands), fist, point, peace, thumb
 #                            (the +X hand only); the side comes from where the hand is
-# Meshes are skinned to LP2_rig (vertex groups jNNN = game joints). Bones not named jNNN are
+# Meshes are skinned to LP2_rig (vertex groups = game joints by name: r_upperarm, chest... or the old jNNN;
+# lp2bones.py lists the names and the aliases read). Bones that are no standard joint are
 # custom: each chain must hang off a joint the part already has; only bones carrying weight
 # (and the links between them and the skeleton) are exported; ids are assigned once and
 # stored on the bone as "lp2_joint". Only the high detail level is authored: every mesh is
@@ -32,13 +33,13 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import lp2model as L  # noqa: E402
 import lp2tex  # noqa: E402
 import rchain  # noqa: E402
+import lp2bones as B  # noqa: E402
 
 SLOTS = {"body": "bd", "head": "hd", "back": "bk", "legs": "lg"}
 RAW = os.path.expanduser("~/Projects/lp2-assets/raw/CustomParts")
 DEFAULT_TEMPLATE = RAW + "/{p}2900/model/hm/hm29/{p}2900/{p}2900.rModel"
 HAND_POSES = {"grip": (200, 201), "open": (202, 203), "fist": (None, 204), "peace": (None, 205),
               "point": (None, 206), "thumb": (None, 207)}
-JOINT_RE = re.compile(r"^j(\d{3})$")
 SET_RE = re.compile(r"^LPC_([A-Za-z0-9]+)_([A-Za-z]+)_(.+)$", re.I)
 # faction code -> the game's faction byte (None = generic, offered to every faction)
 FACTIONS = {"RND": 0, "FJ": 1, "SPE": 2, "NEV": 3, "FF": 4, "ALL": None}
@@ -288,8 +289,8 @@ def borrowed_bones(borrowed, std, warnings, part):
         b, bones = src["bone"], src["bones"]
         pj = bones[b["parent"]]["joint"]
         if pj not in std and pj not in borrowed:
-            raise L.ExportError(f"{part}: j{j:03d} hangs off j{pj:03d}, which neither this part nor the set's other parts give it")
-        out.append(dict(name=f"j{j:03d}", joint=j, parent=pj, local=b["local"], radius=b["radius"],
+            raise L.ExportError(f"{part}: {B.name_of(j)} hangs off {B.name_of(pj)}, which neither this part nor the set's other parts give it")
+        out.append(dict(name=B.name_of(j), joint=j, parent=pj, local=b["local"], radius=b["radius"],
                         mirror_joint=bones[b["mirror"]]["joint"]))
     if out:
         warnings.append(f"NOTE: {part}: added standard joints {', '.join(c['name'] for c in out)} from the set's other parts")
@@ -301,7 +302,7 @@ def custom_bones_for(arm, tpl, used_names, set_name, warnings):
     descendants. Assigns and stores lp2_joint ids. -> list for lp2model, {name: joint}."""
     std = {b["joint"] for b in tpl["bones"]}
     bones = arm.data.bones
-    custom = [b for b in bones if not JOINT_RE.match(b.name)]
+    custom = [b for b in bones if B.joint_of(b.name) is None]
     if len(custom) > L.MAX_CUSTOM_BONES:
         raise L.ExportError(f"{arm.name}: {len(custom)} custom bones (cap {L.MAX_CUSTOM_BONES})")
     # weighted bones plus the unweighted links between them and the part's skeleton
@@ -311,7 +312,7 @@ def custom_bones_for(arm, tpl, used_names, set_name, warnings):
         c.name in used_names for c in b.children_recursive)) for d in [b, *b.children_recursive]}
     for name in used_names:
         b = bones[name]
-        while b is not None and not JOINT_RE.match(b.name):
+        while b is not None and B.joint_of(b.name) is None:
             need.add(b.name)
             b = b.parent
     # ids: keep stored ones, then hand out free ones from JOINT_MAX down
@@ -321,7 +322,7 @@ def custom_bones_for(arm, tpl, used_names, set_name, warnings):
             del b["lp2_joint"]
     taken = {b["joint"] for b in tpl["bones"]} | {int(b["lp2_joint"]) for b in custom if "lp2_joint" in b}
     out, ids = [], {}
-    for b in sorted((bones[n] for n in need), key=lambda b: len(b.parent_recursive)):
+    for b in sorted((bones[n] for n in need), key=lambda b: (len(b.parent_recursive), b.name)):  # same ids every run
         if "lp2_joint" not in b:
             free = next((i for i in range(JOINT_MAX, CORE_JOINT_MAX, -1) if i not in taken), None)
             if free is None:
@@ -331,12 +332,12 @@ def custom_bones_for(arm, tpl, used_names, set_name, warnings):
         j = int(b["lp2_joint"])
         p = b.parent
         if p is None:
-            raise L.ExportError(f"custom bone {b.name} has no parent; parent it to a jNNN joint of this part")
-        if JOINT_RE.match(p.name):
-            pj = int(JOINT_RE.match(p.name).group(1))
+            raise L.ExportError(f"custom bone {b.name} has no parent; parent it to a standard joint of this part")
+        if B.joint_of(p.name) is not None:
+            pj = B.joint_of(p.name)
             if pj not in std:
                 raise L.ExportError(f"custom bone {b.name} hangs off {p.name}, which this part does not have "
-                                    f"(it has {', '.join(f'j{x:03d}' for x in sorted(std))})")
+                                    f"(it has {', '.join(B.name_of(x) for x in sorted(std))})")
         else:
             pj = int(p["lp2_joint"])
         ids[b.name] = j
@@ -436,9 +437,9 @@ def export_part(root, prefix, col, outdir, shadow=True):
         for o in sorted(objs, key=lambda o: o.name):
             jog = {}
             for g in o.vertex_groups:
-                m = JOINT_RE.match(g.name)
-                if m:
-                    jog[g.index] = int(m.group(1))  # joints this part lacks are rejected below
+                j = B.joint_of(g.name)
+                if j is not None:
+                    jog[g.index] = j  # joints this part lacks are rejected below
                 elif g.name in arm.data.bones:
                     jog[g.index] = g.name  # custom bone; id decided once weights are known
             verts, tris, tri_slots = mesh_data(o, jog)
@@ -450,7 +451,7 @@ def export_part(root, prefix, col, outdir, shadow=True):
                     borrowed[j] = src
             stray = [j for j in stray if j not in borrowed]
             if stray:
-                raise L.ExportError(f"{o.name}: weighted to {', '.join(f'j{j:03d}' for j in stray)}, "
+                raise L.ExportError(f"{o.name}: weighted to {', '.join(B.name_of(j) for j in stray)}, "
                                     f"which the {col.name} part doesn't have")
             cx = sum(v["pos"][0] for v in verts) / max(1, len(verts))
             group = object_group(o, cx, warnings)
@@ -650,7 +651,7 @@ def export_sets(outdir, names=None):
             json.dump(meta, f, indent=1, ensure_ascii=False)
     for arm_name, done in exported.items():
         arm = bpy.data.objects[arm_name]
-        idle = [b.name for b in arm.data.bones if not JOINT_RE.match(b.name) and b.name not in done]
+        idle = [b.name for b in arm.data.bones if B.joint_of(b.name) is None and b.name not in done]
         if idle:
             lines.append(f"NOTE: {arm_name}: custom bones with no weights, not exported: {', '.join(idle)}")
     report = "\n".join(lines)

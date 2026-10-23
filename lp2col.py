@@ -52,6 +52,32 @@ def read_sbc1(b):
     return groups
 
 
+def write_sbc1(groups, flags=0x3FFFFF00):
+    """groups [dict(verts [(x, y, z)], tris [((a, b, c), surface)])] -> LP1 SBC1 (PC, little-endian) as read_sbc1
+    reads it (no surface table or BVH: nothing here uses them). A group holds at most 65535 vertices."""
+    ng = len(groups)
+    ntri = sum(len(g["tris"]) for g in groups)
+    nv = sum(len(g["verts"]) for g in groups)
+    og = 0x50
+    ot = og + 24 * ng
+    ov = ot + 48 * ntri
+    grp, tri, vert = bytearray(), bytearray(), bytearray()
+    t0 = v0 = 0
+    for i, g in enumerate(groups):
+        assert len(g["verts"]) <= 65535
+        grp += struct.pack("<6I", 0, t0, 0, v0, i, 0)
+        for (a, b, c), _surface in g["tris"]:
+            tri += bytes(16) + struct.pack("<3H6xI16x", a, b, c, flags)
+        for v in g["verts"]:
+            vert += struct.pack("<3fI", *v, 0)
+        t0 += len(g["tris"])
+        v0 += len(g["verts"])
+    size = ov + len(vert)
+    head = struct.pack("<4sIHHHH4I4I", b"SBC1", size, 6, ng, max(0, ng - 1), 0, og, ot, ov, ov,
+                       max(0, ntri - 1), ntri, ng, nv)
+    return head.ljust(og, b"\0") + grp + tri + vert
+
+
 def bounds(points):
     xs, ys, zs = zip(*points)
     return (min(xs), min(ys), min(zs), max(xs), max(ys), max(zs))

@@ -5,13 +5,15 @@
 #             lp2_blender_import and call import_models([...]).
 #
 # Several parts (head/body/legs/back) imported together share ONE armature: bones are
-# named by the game's global joint ID ("j008"), so the parts line up like in-game.
+# named after the game's global joint IDs (lp2bones.py: j008 = "spine", j017 = "r_upperarm"; the id is
+# kept on the bone as lp2_joint), so the parts line up like in-game. An older rig's jNNN bones are renamed.
 # Original per-model data needed for export is stored as custom properties.
 import bpy, os, struct, sys
 from mathutils import Matrix, Vector
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import mod2obj as M  # noqa: E402
+import lp2bones as B  # noqa: E402
 
 SCALE = 0.01  # LP2 units are cm
 # LP2 is Y-up; Blender is Z-up
@@ -78,19 +80,38 @@ def subtree_size(e):
     return 1 + sum(subtree_size(c) for c in e.children)
 
 
+_READABLE = True  # this import names joints by lp2bones (character rigs) or jNNN (weapons: their own joints)
+
+
+def joint_name(joint):
+    return B.name_of(joint) if _READABLE else f"j{joint:03d}"
+
+
+def rename_old_bones(arm):
+    """a rig from before readable names: its jNNN bones -> lp2bones names (Blender renames the meshes' vertex
+    groups with them) -> how many"""
+    n = 0
+    for b in arm.data.bones:
+        j = B.joint_of(b.name)
+        if j is not None and b.name != B.name_of(j) and B.name_of(j) not in arm.data.bones:
+            b.name = B.name_of(j)
+            n += 1
+    return n
+
+
 def build_armature(arm, merged):
     bpy.context.view_layer.objects.active = arm
     bpy.ops.object.mode_set(mode="EDIT")
     eb = arm.data.edit_bones
     for joint, (world, _parent) in sorted(merged.items()):
-        e = eb.new(f"j{joint:03d}")
+        e = eb.new(joint_name(joint))
         head = (AXIS @ world).translation * SCALE
         e.head = head
         e.tail = head + Vector((0, 0, 0.03))
         e["lp2_joint"] = joint
     for joint, (_world, parent) in merged.items():
-        if parent is not None and f"j{parent:03d}" in eb:
-            eb[f"j{joint:03d}"].parent = eb[f"j{parent:03d}"]
+        if parent is not None and joint_name(parent) in eb:
+            eb[joint_name(joint)].parent = eb[joint_name(parent)]
     # aim each bone along its main chain (the child with the most descendants);
     # leaves continue their parent's direction
     for e in sorted(eb, key=lambda e: len(e.parent_recursive)):
@@ -241,7 +262,7 @@ def import_model(path, arm):
                 for bi, w in M.vertex_skin(v, enc):
                     if bi >= len(bones):
                         continue
-                    gname = f"j{bones[bi]['joint']:03d}"
+                    gname = joint_name(bones[bi]['joint'])
                     if gname not in groups:
                         groups[gname] = ob.vertex_groups.new(name=gname)
                     groups[gname].add([n], w, "ADD")
@@ -276,13 +297,18 @@ def show_lod(level):
             lc.collection.hide_render = lc.name != f"LOD {level}"
 
 
-def import_models(paths, rig_name="LP2_rig"):
+def import_models(paths, rig_name="LP2_rig", readable=None):
+    """readable: joint names from lp2bones (default for the character rig LP2_rig) or jNNN"""
+    global _READABLE
+    _READABLE = rig_name == "LP2_rig" if readable is None else readable
     arm = get_armature(rig_name)
     sources = []
     for p in paths:
         bones, _ = M.read_bones(open(p, "rb").read())
         if bones:
             sources.append((p, bones))
+    if arm.data.bones and _READABLE:
+        rename_old_bones(arm)
     if sources and not arm.data.bones:
         build_armature(arm, merge_skeletons(sources))
     for p in paths:

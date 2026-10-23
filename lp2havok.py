@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Lost Planet 1 (PC or Xbox 360) map physics (Havok 4 packfile) -> Lost Planet 2 rHkCollision (Havok 6.6 packfile).
 
-  lp2havok.py LP1_HAV.bin LP2_TEMPLATE.rHkCollision OUT.rHkCollision
+  lp2havok.py [--rebuild] LP1_HAV.bin LP2_TEMPLATE.rHkCollision OUT.rHkCollision
+
+--rebuild writes a new MOPP tree (lp2mopp.py) in place of LP1's.
 
 Both games' map physics (havokdata\\havNNN: grenades, debris, ragdolls) are one fixed rigid body with
 hkMoppBvTreeShape -> hkSimpleMeshShape + hkMoppCode, in metres, Y up, the stage's space. The LP2 template
@@ -32,30 +34,38 @@ def pad16(x, fill=b"\0"):
     return x + fill * (-len(x) % 16)
 
 
-def main():
-    if len(sys.argv) != 4:
-        raise SystemExit(__doc__)
-    b1 = open(sys.argv[1], "rb").read()
-    t = open(sys.argv[2], "rb").read()
-    p1, pt = hkpack.read(b1), hkpack.read(t)
-    if p1["version"] != 2 or pt["version"] < 6:
-        raise SystemExit("expected an LP1 (packfile v2) source and an LP2 (v7) template")
-    d1, dt = p1["data"]["start"], pt["data"]["start"]
+def read(b):
+    """an LP1 (v2) or LP2 (v7) physics file -> (vertices [(x, y, z)], triangles [(a, b, c)], MOPP info, code)"""
+    p = hkpack.read(b)
+    E, d = p["E"], p["data"]["start"]  # Colonies maps only exist as Xbox 360 (big-endian) files
+    if p["version"] == 2:
+        m = d + obj(p, "hkSimpleMeshShape")
+        nv, nt, vo, ts = arr(b, m + 0x10, E), arr(b, m + 0x1C, E), m + 0x40, 12
+        c = d + obj(p, "hkMoppCode")
+    else:
+        m = d + obj(p, "hkpSimpleMeshShape")
+        nv, nt, vo, ts = arr(b, m + 0x18, E), arr(b, m + 0x24, E), m + 0x50, 16
+        c = d + obj(p, "hkpMoppCode")
+    verts = [struct.unpack_from(E + "3f", b, vo + 16 * i) for i in range(nv)]
+    tris = [struct.unpack_from(E + "3i", b, vo + 16 * nv + ts * i) for i in range(nt)]
+    info = struct.unpack_from(E + "4f", b, c + 0x10)
+    code = bytes(b[c + 0x30:c + 0x30 + arr(b, c + 0x20, E)])
+    if tris and max(max(x) for x in tris) >= nv:
+        raise SystemExit("triangle index out of range: layout guess is wrong")
+    return verts, tris, info, code
+
+
+def write(t, verts, tris, info, code):
+    """the LP2 template file t with this mesh and MOPP -> bytes"""
+    pt = hkpack.read(t)
+    if pt["version"] < 6:
+        raise SystemExit("expected an LP2 (v7) template")
+    dt = pt["data"]["start"]
     objs_t = [c for _, c in pt["objects"]]
     if objs_t[-2:] != ["hkpMoppCode", "hkpSimpleMeshShape"]:
         raise SystemExit(f"template objects end with {objs_t[-2:]}, expected MOPP code then the mesh")
-
-    # LP1 mesh + MOPP
-    E = p1["E"]  # Colonies maps only exist as Xbox 360 (big-endian) files
-    m1 = d1 + obj(p1, "hkSimpleMeshShape")
-    nv, nt = arr(b1, m1 + 0x10, E), arr(b1, m1 + 0x1C, E)
-    verts = struct.pack(f"<{4 * nv}f", *struct.unpack_from(f"{E}{4 * nv}f", b1, m1 + 0x40))
-    tris = [struct.unpack_from(E + "3i", b1, m1 + 0x40 + 16 * nv + 12 * i) for i in range(nt)]
-    c1 = d1 + obj(p1, "hkMoppCode")
-    info = struct.pack("<4f", *struct.unpack_from(E + "4f", b1, c1 + 0x10))
-    code = b1[c1 + 0x30:c1 + 0x30 + arr(b1, c1 + 0x20, E)]
-    if max(max(x) for x in tris) >= nv:
-        raise SystemExit("triangle index out of range: LP1 layout guess is wrong")
+    nv, nt = len(verts), len(tris)
+    vbytes = b"".join(struct.pack("<4f", *v[:3], 0) for v in verts)
 
     # template objects up to the MOPP code stay as they are (the BV tree's code info copy is 0 in the
     # stock files: filled in at load)
@@ -63,7 +73,7 @@ def main():
     head = bytes(t[dt:dt + code_at])
     # MOPP code object
     cobj = bytearray(t[dt + code_at:dt + code_at + 0x30])
-    cobj[0x10:0x20] = info
+    cobj[0x10:0x20] = struct.pack("<4f", *info)
     struct.pack_into("<II", cobj, 0x24, len(code), len(code) | 0xC0000000)
     cobj[0x2C] = 2
     mopp = pad16(bytes(cobj) + code)
@@ -74,7 +84,7 @@ def main():
     struct.pack_into("<II", mobj, 0x1C, nv, nv | 0xC0000000)
     struct.pack_into("<II", mobj, 0x28, nt, nt | 0xC0000000)
     tri_bytes = b"".join(struct.pack("<3iH2x", *x, 0) for x in tris)
-    mesh = bytes(mobj) + verts + tri_bytes
+    mesh = bytes(mobj) + vbytes + tri_bytes
     data = pad16(bytes(head) + mopp + mesh)
 
     # fixups: template ones before the MOPP code keep their offsets; the code / mesh ones move
@@ -97,11 +107,21 @@ def main():
     idx = [s["tag"] for s in pt["sections"]].index("__data__")
     h = 0x40 + idx * 0x30 + 20
     struct.pack_into("<7I", out, h, dt, o_lf, o_gf, o_vf, end, end, end)
-    open(sys.argv[3], "wb").write(out)
-    # self-check: read it back
-    p = hkpack.read(bytes(out))
-    print(f"{sys.argv[3]}: {nv} vertices, {nt} triangles, MOPP {len(code)} bytes, {len(out)} bytes; objects "
-          + ", ".join(f"{c}@{o:#x}" for o, c in p["objects"][-3:]))
+    hkpack.read(bytes(out))  # self-check: it reads back
+    return bytes(out)
+
+
+def main():
+    args = [a for a in sys.argv[1:] if a != "--rebuild"]
+    if len(args) != 3:
+        raise SystemExit(__doc__)
+    verts, tris, info, code = read(open(args[0], "rb").read())
+    if "--rebuild" in sys.argv:
+        import lp2mopp
+        info, code = lp2mopp.build(verts, tris)
+    out = write(open(args[1], "rb").read(), verts, tris, info, code)
+    open(args[2], "wb").write(out)
+    print(f"{args[2]}: {len(verts)} vertices, {len(tris)} triangles, MOPP {len(code)} bytes, {len(out)} bytes")
 
 
 if __name__ == "__main__":

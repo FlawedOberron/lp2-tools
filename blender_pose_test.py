@@ -25,10 +25,10 @@ def rot(name, axis, deg):
     m = pb[name].matrix.copy()
     piv = m.translation.copy()
     pb[name].matrix = Matrix.Translation(piv) @ Matrix.Rotation(math.radians(deg), 4, axis) @ Matrix.Translation(-piv) @ m
-rot("j013", "Y", -70); rot("j017", "Y", 70)    # upper arms down to the sides
-rot("j014", "X", 70); rot("j018", "X", 70)     # elbows bend forward
-rot("j011", "Z", 40)                          # head turns
-rot("j002", "X", 30); rot("j006", "X", -30)    # one leg forward, one back (if those are thighs)
+rot("l_upperarm", "Y", -70); rot("r_upperarm", "Y", 70)    # upper arms down to the sides
+rot("l_forearm", "X", 70); rot("r_forearm", "X", 70)     # elbows bend forward
+rot("head", "Z", 40)                          # head turns
+rot("l_thigh", "X", 30); rot("r_shin", "X", -30)    # one leg forward, one back (if those are thighs)
 bpy.context.view_layer.update()
 scn.render.filepath = out + "_posed.png"; bpy.ops.render.render(write_still=True)
 print("BONES", [b.name for b in arm.data.bones])

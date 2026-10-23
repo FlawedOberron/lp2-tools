@@ -5,7 +5,10 @@
 
 Header 0x30 bytes: u16 counts at 0x0A (group 1), 0x0C (group 2), 0x0E (group 3), 0x10 (group 4).
 Records follow in group order; group 1 records are 0x140 bytes, the others 0x120.
-Record: +0x00 u32 group, +0x04 u32 phase (0 / 10 / 20; unconfirmed: wave or delay),
+Record (cObjSetDataBase from +0x10: the decompile's offsets are these + 0x10): +0x00 u32 group, +0x04 u32
+  controlStatus (0 / 10 / 20, VS too; meaning unconfirmed), +0x74 u32 mUserData[16] (copied to the object's
+  mUserWork; weapons / VS: [2] +0x7c dig pile model 0 om8100, 1 om8103, 2 om8104, [3] +0x80 digs to uncover
+  (0 = not buried), [4] +0x84 sink depth cm, [5] +0x88 pile height),
   +0x18 u8 1, u8 kind (2 vehicle, 4 weapon, 6 post), u16 item id (weapon / VS / post type),
   +0x40 f32 pos[3] (cm), +0x50 f32 rot[3] (deg), +0x60 f32 scale[3].
 Group meaning, inferred from contents: 1 = vehicles (VS), 3 = posts and gimmicks, 4 = weapon pickups.
@@ -25,6 +28,7 @@ def parse(b):
             grp = struct.unpack_from("<I", b, off)[0]
             _, kind, item = struct.unpack_from("<BBH", b, off + 0x18)
             out.append(dict(group=NAMES[g], phase=struct.unpack_from("<I", b, off + 4)[0],
+                            dig=struct.unpack_from("<I", b, off + 0x80)[0],
                             kind=kind, item=item,
                             pos=[round(v, 1) for v in struct.unpack_from("<3f", b, off + 0x40)],
                             rot=[round(v, 1) for v in struct.unpack_from("<3f", b, off + 0x50)],

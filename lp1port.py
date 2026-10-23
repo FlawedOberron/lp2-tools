@@ -344,7 +344,7 @@ def main():
             kids = [n for n, _pos, _c, pn in extra if pn == name]
             tip = head[kids[0]] if kids else None
             b.tail = tip if tip is not None and (tip - b.head).length > 1e-4 else b.head + Vector((0, 0, -0.03))
-            b.parent = eb[parent] if parent else eb[f"j{LP1_TO_LP2[c]:03d}"]
+            b.parent = eb[parent] if parent else eb[IMP.joint_name(LP1_TO_LP2[c])]
         bpy.ops.object.mode_set(mode="OBJECT")
         for name in chain_starts:
             arm.data.bones[name]["lp2_chain"] = 1
@@ -516,7 +516,7 @@ def main():
         groups = {}
         for v in verts:
             for j, w in v[4].items():
-                g = j if isinstance(j, str) else f"j{j:03d}"
+                g = j if isinstance(j, str) else IMP.joint_name(j)
                 if g not in groups:
                     groups[g] = ob.vertex_groups.new(name=g)
                 groups[g].add([v[0]], w, "REPLACE" if False else "ADD")

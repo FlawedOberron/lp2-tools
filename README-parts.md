@@ -119,14 +119,24 @@ Reference renders: `~/Projects/lp2-assets/previews/hand_poses_bd2900.png`.
 3. Clean up in Weight Paint, then **Weights → Limit Total (4)** and **Normalize All**.
 4. Test in Pose mode (bend the arms, legs and spine), then clear the pose with Alt+G / Alt+R.
 
-Vertex groups keep the game's joint names (`j018` …). A part can only use the joints its
-template has; the exporter stops with a list if you weight to anything else. Influences under
-0.002 are dropped.
+Bones and vertex groups use readable joint names: `pelvis`, `spine`, `chest`, `neck`, `head`,
+`l_shoulder` / `l_upperarm` / `l_forearm` / `l_hand` / `l_fingers`, `l_thigh` / `l_shin` / `l_foot`
+(and `r_` for the right; the character's left is -X), plus the stock chain bones and mounts
+(`python3 lp2bones.py` prints the full table with the game's joint ids). The exporter also reads the
+old `j018` style and common aliases (`UpperArm.R`, `clavicle_l`, `LeftCalf`, `hips`...), so rigs from other
+tools can keep their names. Older .blend files: `flatpak run org.blender.Blender -b FILE.blend --python
+lp2_skeleton.py -- rename` (importing into an old rig renames it too).
+
+`skeleton/lp2_skeleton.blend` is the bare skeleton (armature `LP2_rig`, every standard joint at the game's
+bind pose) for rigging a new model from scratch: parent your mesh to it and weight to those bones.
+
+A part can only use the joints its template has; the exporter stops with a list if you weight to anything
+else. Influences under 0.002 are dropped.
 
 ## 5. Custom bones (hair, cloth, gear)
 
-- Any bone **not** named `jNNN` is custom. Name it what you like.
-- It must hang off a joint the part already has (hair off `j011`, the head bone), either directly
+- Any bone that isn't a standard joint name (or alias) is custom. Name it what you like.
+- It must hang off a joint the part already has (hair off `head`), either directly
   or through other custom bones. Chains and branches are fine.
 - **Only bones carrying weight are exported**, plus any unweighted bones linking them to the
   skeleton. Spare bones are listed in the report and skipped.
