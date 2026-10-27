@@ -70,6 +70,23 @@ def convert(src, dst):
     return t
 
 
+def dds_png(path, max_size):
+    """a DDS (or any image Pillow reads) -> PNG bytes, the first surface, fitted in max_size; None if unreadable."""
+    import io
+    from PIL import Image
+    try:
+        im = Image.open(path)
+        im.load()
+    except Exception:
+        return None
+    if im.mode not in ("RGB", "RGBA"):
+        im = im.convert("RGBA")
+    im.thumbnail((max_size, max_size))
+    out = io.BytesIO()
+    im.save(out, "PNG")
+    return out.getvalue()
+
+
 def main():
     a = sys.argv[1:]
     if not a:

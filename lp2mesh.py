@@ -4,6 +4,7 @@
   lp2mesh.py import --game LP2_DIR PROJECT FILE [--name N] [--collision mesh|box|none] [--scale S] [--mat SRC=MAT ...]
   lp2mesh.py rebuild --game LP2_DIR PROJECT NAME [--collision ...] [--scale S] [--mat SRC=MAT ...]
   lp2mesh.py material --game LP2_DIR PROJECT NAME [--bm IMG] [--nm IMG] [--mm IMG] [--colour R,G,B] [--size N]
+                       [--grid M] [--blockout]
   lp2mesh.py delete PROJECT NAME
   lp2mesh.py list PROJECT                        imports and materials as JSON
 
@@ -19,6 +20,10 @@ the stage folder, so imports that share a material (a trim sheet) share its text
 A file's own materials become project materials named after them (an existing one of that name is reused, so
 meshes from one source file share their sheets); --mat SRC=MAT maps a file material to a project one.
 No normal map = flat; no mask map = black (lp2stage.py's defaults for LP1 materials without them).
+"grid": M (--grid; 0 = off) replaces the mesh's UVs with world-projected ones, one texture tile per M metres of the
+piece's own space (each face takes the axis plane it faces most; a scaled piece stretches it).
+--blockout: the colour map becomes a generated blockout grid (blockout_image: one tile = 1 m, white lines every
+metre / 25 cm / 12.5 cm on the material's colour, default orange) and "grid" 1 unless one is set.
 
 Space: glTF and Blender's OBJ export (Y up) match LP2's axes; positions are metres * --scale (100: cm).
 Vertex colours (glTF COLOR_0, OBJ "v x y z r g b") tint the baked light, which is otherwise lp2props.py's top light.
@@ -314,6 +319,36 @@ def load_image(path, size):
     return np.asarray(im)
 
 
+BLOCKOUT_ORANGE = (0.93, 0.47, 0.16)
+
+
+def blockout_image(colour=BLOCKOUT_ORANGE, px=512):
+    """a dev-texture style tile (1 m): the colour in 50 cm checks a shade apart, white lines every 12.5 cm
+    (faint), 25 cm and a bold one round the edge -> RGBA uint8"""
+    base = np.array([255 * c for c in colour], np.float32)
+    y, x = np.mgrid[0:px, 0:px]
+    q = px // 2
+    img = np.where((((x // q) + (y // q)) % 2 == 0)[..., None], base, base * 0.88)
+    def lines(step, half, alpha):
+        d = np.minimum(np.minimum(x % step, step - 1 - x % step), np.minimum(y % step, step - 1 - y % step))
+        return np.where(d < half, alpha, 0.0)
+    a = np.maximum.reduce([lines(px // 8, 1, 0.22), lines(px // 4, 1, 0.5), lines(px, 4, 1.0)])[..., None]
+    img = img * (1 - a) + 255 * a
+    return np.concatenate([np.clip(img, 0, 255).astype(np.uint8), np.full((px, px, 1), 255, np.uint8)], 2)
+
+
+def grid_uvs(P, T, N, tile):
+    """unshared vertices with box-projected UVs, tile cm per texture repeat -> P, T, N, U"""
+    P, N = P[T].reshape(-1, 3), (N[T].reshape(-1, 3) if N is not None else None)
+    a, b, c = P[0::3], P[1::3], P[2::3]
+    fn = np.abs(np.cross(b - a, c - a))
+    axis = np.repeat(np.argmax(fn, 1), 3)
+    U = np.where(axis[:, None] == 0, P[:, [2, 1]], np.where(axis[:, None] == 1, P[:, [0, 2]], P[:, [0, 1]])) / tile
+    U[axis != 1, 1] *= -1   # walls: texture up = world up
+    c = np.ascontiguousarray
+    return c(P), np.arange(len(P)).reshape(-1, 3), (c(N) if N is not None else None), c(U)
+
+
 def build_material(project, name):
     """the material's rTextures in materials/<name>/build/ (rebuilt when material.json or an image changes)
     -> {kind: path}"""
@@ -438,12 +473,18 @@ def build_import(game, project, name, log=print):
         P = p["P"] * scale
         T = p["T"]
         N = p["N"] if p["N"] is not None else lp2props.face_normals(P, T)
-        N = N / np.maximum(np.linalg.norm(N, axis=1, keepdims=True), 1e-9)
         U = p["U"] if p["U"] is not None else np.zeros((len(P), 2))
+        C = p["C"]
+        grid = float((load_material(project, mname) or {}).get("grid") or 0)
+        if grid > 0:
+            if C is not None:
+                C = C[T].reshape(-1, C.shape[1])
+            P, T, N, U = grid_uvs(P, T, N, grid * 100)
+        N = N / np.maximum(np.linalg.norm(N, axis=1, keepdims=True), 1e-9)
         Tg = lp2props.tangents(P, U, N, T)
         v = lp2props.stage_verts(P, N, Tg, U)
-        if p["C"] is not None:
-            v[:, 24:27] = np.clip(v[:, 24:27] * np.clip(p["C"], 0, 1), 0, 255).astype(np.uint8)
+        if C is not None:
+            v[:, 24:27] = np.clip(v[:, 24:27] * np.clip(C, 0, 1), 0, 255).astype(np.uint8)
         meshes.append(dict(mat=mat_index[mname], verts=v, tris=T))
         ctris.append(T + len(cverts))
         cverts.extend(P.tolist())
@@ -564,6 +605,17 @@ def cmd_material(a):
         m["colour"] = [float(x) for x in a.colour.split(",")]
     if a.size:
         m["size"] = a.size
+    if a.blockout:
+        from PIL import Image
+        colour = tuple(m["colour"]) if a.colour else BLOCKOUT_ORANGE
+        Image.fromarray(blockout_image(colour)).save(os.path.join(d, "bm.png"))
+        m["bm"] = "bm.png"
+        m.setdefault("grid", 1.0)
+    if a.grid is not None:
+        if a.grid > 0:
+            m["grid"] = a.grid
+        else:
+            m.pop("grid", None)
     save_material(a.project, name, m)
     build_material(a.project, name)
     users = material_users(a.project, name)
@@ -613,6 +665,8 @@ def main():
         s.add_argument("--" + k, help="image file ('' removes it)")
     s.add_argument("--colour")
     s.add_argument("--size", type=int)
+    s.add_argument("--grid", type=float, help="world-projected UVs: metres per texture tile (0 = the mesh's own UVs)")
+    s.add_argument("--blockout", action="store_true", help="generate a blockout grid colour map (1 m tiles)")
     for c in ("delete", "list"):
         s = sub.add_parser(c)
         s.add_argument("project")

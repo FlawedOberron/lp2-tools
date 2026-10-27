@@ -13,6 +13,10 @@ The package is the base stock map (project base.stock, 0 = Desecration) with eve
   light, sky, water, cam   lp2light.py: static daylight, environment settings; written to both the main and
                            variable arcs (the variable arc's copies are the ones the game uses)
   occluders                emptied (the stock map's would cull the new geometry)
+  base map leftovers       nothing visible of the stock map stays (lp2clean.py, lp2scenebox.neutral, lp2layout.py):
+                           its gimmicks (Desecration's windmill and om8322s) and posts, scenery-list effects (water
+                           planes, falling ash), placed field effects, per-zone fog / weather / env textures (plain
+                           defaults, or the project's environment.fog), radar images (blank), environment cube (grey)
   water planes             the stock map's (effect models, its own spots) stubbed; water is a project setting
   resource paths           arcsub.py 'scr\\Online\\online00\\' -> 'scr\\Online\\<tag>\\' so the game's
                            path-keyed cache never mixes it up with the stock map or another package
@@ -22,7 +26,7 @@ import argparse, json, math, os, shutil, struct, subprocess, sys, tempfile, zipf
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import arcx, lp2col, lp2pieces, lp2project, lp2stage, mapslot, sbc  # noqa: E402
+import arcx, lp2clean, lp2col, lp2pieces, lp2project, lp2scenebox, lp2stage, lp2weather, mapslot, sbc  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ARCS = {"main": "arcXmlTmpPC/aArea_ONLINE_00.arc", "v": "arcXmlTmpPC/variable/aArea_ONLINE_00_v.arc",
@@ -103,7 +107,8 @@ def build_scr(stock_scr, stage_out, dst):
             p = os.path.join(stage_out, *n.split("\\")) + "." + cls
             if not os.path.exists(p):
                 os.makedirs(os.path.dirname(p), exist_ok=True)
-                open(p, "wb").write(data)
+                # the stock environment cube -> plain grey (lp2clean.neutral_cube)
+                open(p, "wb").write(lp2clean.neutral_cube(data) if n.lower().endswith("_cm-01") else data)
     for n, h, *_ in arcx.entries(open(stock_scr, "rb").read()):
         if os.path.exists(os.path.join(stage_out, *n.split("\\")) + "." + lt[h]):
             order.append((n, lt[h])); have.add(n.lower())
@@ -225,6 +230,118 @@ def sky_sources(game, folder, p, sky, stage, A, log=print):
             put(A["v"], files)
 
 
+def weather_type(env):
+    """environment.weather's type when it is on (lp2weather.py), else None"""
+    w = env.get("weather") or {}
+    return w.get("type") if w.get("type") in lp2weather.PRESETS and float(w.get("amount", 0)) > 0 else None
+
+
+def weather_rates(env):
+    """lp2light --weather: the strength for each effect scheduler Efc0-3 (environment.weather.layouts: on per layout,
+    if the game ties them to the 4 layouts; untested)"""
+    if not weather_type(env):
+        return "0"
+    w = env["weather"]
+    on = w.get("layouts") or [True] * 4
+    return ",".join(str(int(float(w.get("amount", 0))) if on[i] else 0) for i in range(4))
+
+
+def add_weather(game, A, env, W, log=print):
+    """the weather's effect lists (and what they name) from its stock map into the package's main arc"""
+    kind = weather_type(env)
+    if not kind:
+        return
+    d = W("weather")
+    os.makedirs(d, exist_ok=True)
+    files = {}
+    for i, ((n, cls), b) in enumerate(sorted(lp2weather.resources(game, kind).items())):
+        q = os.path.join(d, f"{i}.{cls}")
+        open(q, "wb").write(b)
+        files[f"{n}.{cls}"] = q
+    tool("arcput.py", "--add", A["main"], A["main"] + ".new", *(f"{k}={v}" for k, v in files.items()))
+    os.replace(A["main"] + ".new", A["main"])
+    w = env["weather"]
+    log(f"  weather: {lp2weather.PRESETS[kind][4]}, strength {float(w.get('amount', 0)):g}, {len(files)} resources, "
+        f"{len(w.get('volumes') or [])} no-weather volumes")
+
+
+def strip_base(A, stock, env, W, log=print):
+    """the base map's own visible resources out of the package (lp2clean.py): scenery list entries (water planes,
+    falling ash, underwater effect unless the project has water), placed field effects, trigger zones, the water
+    scheduler, the radar map images"""
+    m = stock["main"]
+    d = W("clean")
+    os.makedirs(d, exist_ok=True)
+    files, notes = {}, []
+    def out(name, data):
+        files[name] = os.path.join(d, name)
+        open(files[name], "wb").write(data)
+    weather = weather_type(env)
+    for nm, b in m.get("rScrList", []):
+        data, n = lp2clean.scrlist(b, env.get("water") is not None)
+        if weather:
+            data = lp2weather.scrlist(data, weather)
+        out(base(nm) + ".rScrList", data)
+        notes.append(f"{n} scenery list entries")
+    for k in ("main", "v"):   # both arcs carry the trigger zones
+        files_k = {}
+        for nm, b in stock[k].get("rAreaHitLayout", []):
+            data, n = lp2clean.areahit(b)
+            q = os.path.join(d, k + "_" + base(nm) + ".rAreaHitLayout")
+            open(q, "wb").write(data)
+            files_k[base(nm) + ".rAreaHitLayout"] = q
+        if k == "v":
+            put(A["v"], files_k)
+        else:
+            files.update(files_k)
+            notes.append(f"{n} trigger zones")
+    for nm, b in m.get("rFieldSet", []):
+        data, n = lp2clean.fieldset(b)
+        out(base(nm) + ".rFieldSet", data)
+        notes.append(f"{n} placed effects")
+    import lp2light
+    root_only = next((b for nm, b in m.get("rScheduler", []) if len(lp2light.tracks(b)) == 1), None)
+    for nm, b in m.get("rScheduler", []):
+        if base(nm).lower() == "on00_water" and root_only:
+            out(base(nm) + ".rScheduler", lp2clean.empty_scheduler(root_only))
+            notes.append("water scheduler")
+    radar = [(nm, b) for nm, b in m.get("rTexture", []) if "rader_map" in nm.lower()]
+    for nm, b in radar:
+        out(base(nm) + ".rTexture", lp2clean.blank_texture(b))
+    if radar:
+        notes.append(f"{len(radar)} radar images blanked")
+    put(A["main"], files)
+    log("base map leftovers removed: " + ", ".join(notes))
+
+
+def preload_arcs(game, osf_dir):
+    """the autoArc archives for every VS (uVsXX), VS-mounted weapon and weapon pickup (uWpXX) the layouts use,
+    for map.json "preload": the xlive mod adds them to the base map's preload list, which only has its own map's."""
+    import objset
+    auto = os.path.join(game, "nativePC", "arcLp2Xml", "autoArc")
+    have = {f[:-4].lower(): f[:-4] for f in os.listdir(auto) if f.lower().endswith(".arc")}
+    want = set()
+    for f in sorted(os.listdir(osf_dir)):
+        if not f.endswith(".osf"):
+            continue
+        b = open(os.path.join(osf_dir, f), "rb").read()
+        counts, _, _ = objset.parse(b)
+        off = 0x30
+        for g in (1, 2, 3, 4):
+            for _ in range(counts[g]):
+                r = b[off:off + objset.SIZES[g]]
+                off += objset.SIZES[g]
+                if g == 1:
+                    want.add("uvs%02x" % struct.unpack_from("<H", r, 0x1A)[0])
+                    for i in range(4):
+                        on, kind, wid = struct.unpack_from("<BBH", r, 0x120 + 5 * i)
+                        if on and kind == 4:
+                            want.add("uwp%02x" % wid)
+                elif g == 4:
+                    want.add("uwp%02x" % struct.unpack_from("<H", r, 0x1A)[0])
+    return sorted(have[w] for w in want if w in have)
+
+
 def compile_project(game, folder, out_zip, work=None, log=print, library=None):
     p = lp2project.load(folder)
     bad = lp2project.check(folder)
@@ -246,6 +363,8 @@ def compile_project(game, folder, out_zip, work=None, log=print, library=None):
         stock_package(game, pkg, stock_no)
         A = {k: os.path.join(pkg, "nativePC", v) for k, v in ARCS.items()}
         stock = {k: entries(v) for k, v in A.items()}
+        strip_base(A, stock, env, W, log)
+        add_weather(game, A, env, W, log)
         tmpl = {}
         os.makedirs(W("tmpl"), exist_ok=True)
         for k, cls, name in (("scr", "rModel", "online00"), ("scr", "rCollision", "atarionline00"),
@@ -259,7 +378,7 @@ def compile_project(game, folder, out_zip, work=None, log=print, library=None):
         shutil.rmtree(stage, ignore_errors=True)
         report(0.05, "stage model")
         tool("lp2stage.py", "--template", tmpl["online00"], "--out", stage, "--tex-dir", STAGE_DIR,
-             "--light", p["stage"].get("light_scale", 0.5), *sum((["--empty", s] for s in STUBS), []), *models,
+             "--light", p["stage"].get("light_scale", 0.5), "--balance", p["stage"].get("light_balance", 1.0), *sum((["--empty", s] for s in STUBS), []), *models,
              progress=(0.05, 0.55))
         geo = lp2pieces.load_geometry(P(p["geometry"]["file"])) if p.get("geometry") else {}
         pieces = None
@@ -352,8 +471,10 @@ def compile_project(game, folder, out_zip, work=None, log=print, library=None):
         for cls, items in stock["main"].items():
             for nm, data in items:
                 b = base(nm)
-                if (cls == "rScheduler" and ("_Light" in b or "_filter" in b.lower() or "_Efc" in b or b == "online00_cam")) \
+                if (cls == "rScheduler" and ("_Light" in b or "_filter" in b.lower() or "_efc" in b.lower() or b == "online00_cam")) \
                         or cls == "rSceneBox2":
+                    if cls == "rSceneBox2":   # the stock zones' fog, weather, field effects, wind, env textures
+                        data = lp2scenebox.neutral(data, env.get("fog"))
                     open(os.path.join(li, b + "." + cls), "wb").write(data)
         json.dump(env["camera"] or camera(floor), open(W("cam.json"), "w"))
         bounds = f"{floor.lo[0] - 500:.0f},{floor.lo[2] - 500:.0f},{floor.hi[0] + 500:.0f},{floor.hi[2] + 500:.0f}"
@@ -365,13 +486,25 @@ def compile_project(game, folder, out_zip, work=None, log=print, library=None):
              "--sky", csv(env["sky"]), "--bloom", csv(env["bloom"]), "--curves", curves,
              *(["--keep-colours"] if env["colours"] == "stock" else []),
              *(["--keep-atmosphere"] if env["atmosphere"] == "stock" else []),
-             *(["--water", env["water"]] if env["water"] is not None else []), "--env", W("light_env.json"), li, lo)
+             *(["--water", env["water"]] if env["water"] is not None else []),
+             "--weather", weather_rates(env),
+             "--env", W("light_env.json"), li, lo)
+        for f in os.listdir(lo):   # weather on in every zone, the no-weather volumes as zones
+            if f.lower().endswith(".rscenebox2"):
+                q = os.path.join(lo, f)
+                data, nv, full = lp2weather.zones(open(q, "rb").read(), env.get("weather") or {})
+                open(q, "wb").write(data)
+                if full:
+                    log(f"  {full} grid cells had no room for a no-weather volume")
         out = {f: os.path.join(lo, f) for f in os.listdir(lo)}
         put(A["main"], out)
         in_v = {(base(nm) + "." + cls).lower() for cls, items in stock["v"].items() for nm, _ in items}
         put(A["v"], {f: q for f, q in out.items() if f.lower() in in_v})
 
-        json.dump(dict(name=info["name"], base=0, number=0, size=info["size"]), open(os.path.join(pkg, "map.json"), "w"), indent=1)
+        preload = preload_arcs(game, ip_out)
+        log(f"  preload: {len(preload)} VS / weapon archives")
+        json.dump(dict(name=info["name"], base=0, number=0, size=info["size"], preload=preload),
+                  open(os.path.join(pkg, "map.json"), "w"), indent=1)
         th = info.get("thumbnail")
         if th:
             tool("lp2thumb.py", P(th["image"]), os.path.join(pkg, "thumbnail.rTexture"), "--zoom", th.get("zoom", 1),

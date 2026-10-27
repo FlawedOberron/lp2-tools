@@ -27,7 +27,7 @@ Overall: the test went very well. The game-folder log was overwritten by a later
 so nothing from the test itself survives. Next test: copy `xlive_steamworks.log` from both PCs right after
 the session.
 
-1. **Save not transferring properly (Gato's save).** The file he sent is `~/Downloads/Lostplanet2.Lostplanet2Save-`.
+1. **RESOLVED 2026-10-27 (user: conversion looked all good).** **Save not transferring properly (Gato's save).** The file he sent is `~/Downloads/Lostplanet2.Lostplanet2Save-`.
    - The name has lost its `capcom` suffix (likely the chat upload). The game only reads `...Save-capcom`.
    - The file isn't in the format `lp2save.py` knows: 20872 bytes versus our 20512. It starts
      `28 01 00 00 02 03 01 00 ...` and has no SHA-1 + `28 c9 ce 77` magic header.
@@ -43,7 +43,7 @@ the session.
    - Online it didn't show. Suspects:
      - The joiner never sees `g_survival` (rules from the host's member data).
      - The list draw hook (`ec4df0` / `ed4c00`) uses a different path when online.
-4. **Leaderboards not working (sokie's original DLL too).**
+4. **RESOLVED 2026-10-27 (training boards confirmed by user; fix 85964b1: local stats-only sessions).** **Leaderboards not working (sokie's original DLL too).**
    - XUserReadStats / XUserWriteStats are mapped to Steam leaderboards upstream.
    - spa: 63 stats views, 9 queries. Check which calls the game makes and what Steam returns. The
      leaderboards may not exist for app 45750 (create on first write?).

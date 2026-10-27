@@ -8,7 +8,8 @@ layout variant V (second digit). Unused bytes are uninitialised memory: only the
           40 (x14/8, unknown), 30/31 (2-team mode only), 50-52, 61-62, 100 (one each, unknown)
     +0x20 f32x3 position (cm, stage space), +0x34 f32 yaw (degrees, about +Y)
   then objects, 0xB0 each, to the end of the file (unused slots are kind 0):
-    +0x00 u32 kind (1 VS, 3 object, 4 weapon), +0x18 u8 1, u8 category (2 vs, 4 wp, 6 om), u16 model id
+    +0x00 u32 kind (1 VS, 3 object, 4 weapon), +0x04 u32 VS: 0 / 1, splitting a layout's VS into two halves at
+          near-identical spots (one of each pair; LP1's VS amount?) -> "lp1_pair", +0x18 u8 1, u8 category (2 vs, 4 wp, 6 om), u16 model id
           (vs/wp: high byte; om: both bytes), +0x20 f32x3 position, +0x34 f32 yaw
 Files with identical contents are merged (their mode/variant ids listed together).
 """
@@ -35,8 +36,12 @@ def parse(b):
         if kind in OBJ_KIND and b[o + 0x18] == 1:
             cat, mid = b[o + 0x19], struct.unpack_from(">H", b, o + 0x1A)[0]
             model = {2: f"vs{mid >> 8:02x}", 4: f"wp{mid >> 8:02x}", 6: f"om{mid:04x}"}.get(cat, f"c{cat}_{mid:04x}")
-            objs.append(dict(kind=kind, role=OBJ_KIND[kind], model=model, pos=struct.unpack_from(">3f", b, o + 0x20),
-                             yaw=struct.unpack_from(">f", b, o + 0x34)[0]))
+            q = dict(kind=kind, role=OBJ_KIND[kind], model=model, pos=struct.unpack_from(">3f", b, o + 0x20),
+                     yaw=struct.unpack_from(">f", b, o + 0x34)[0])
+            pair = struct.unpack_from(">I", b, o + 4)[0]
+            if kind == 1 and pair in (0, 1):
+                q["lp1_pair"] = pair
+            objs.append(q)
         o += 0xB0
     return dict(points=pts, objects=objs)
 

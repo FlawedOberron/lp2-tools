@@ -16,7 +16,9 @@ GEOMETRY.json (the project's geometry file, written by the editor):
   "copies": [{"atom": a, "m": [12]}]   extra copies of an atom's original geometry (duplicates, prefabs);
             with "map": "lp1/s900" the atom is another map's, from the editor's asset library (lp2library.py:
             its built stage, materials and textures are merged in, its collision copied the same way)
-  "tree":   [{"name", "atoms" | "children"}]  the editor's grouping (not used to build)
+  "walls_hidden": [k]                  collision-only walls (collision_owners) left out: LP1's invisible boundaries
+  "tree":   [{"name", "atoms" | "children", "copies"}]  the editor's grouping; a node with "mesh_collision": true
+            (and everything under it) gets collision made from its visible triangles instead of the map's
 Collision (lp2col.py groups, LP1 SBC1 read) follows: each collision triangle goes with the visual atom nearest
 its centre (within 4 m); triangles of moved atoms are moved, of hidden ones dropped, of copied ones copied.
 """
@@ -184,7 +186,96 @@ def transform_verts(v, M):
 
 
 def edited(geo):
-    return bool(geo and (geo.get("xf") or geo.get("hidden") or geo.get("copies")))
+    return bool(geo and (geo.get("xf") or geo.get("hidden") or geo.get("copies") or geo.get("walls_hidden")
+                         or mesh_collision(geo)[0] or mesh_collision(geo)[1]))
+
+
+WALL = -1000000   # owner of collision-only wall k: WALL - k
+
+
+def collision_owners(groups, S, per_mesh):
+    """per group, per triangle: the stage atom nearest its centre (within NEAR), or WALL - k for collision-only
+    wall k: triangles with no visible geometry near (invisible boundaries), joined by shared corners (welded to
+    1 cm) and numbered by their first triangle, so the same map always gives the same wall ids."""
+    samples, ids = atom_samples(S, per_mesh)
+    own, loose = [], []
+    for gi, g in enumerate(groups):
+        if not g["tris"]:
+            own.append(np.zeros(0, np.int64))
+            continue
+        V = np.asarray(g["verts"], np.float64).reshape(-1, 3)
+        tri = np.array([t for t, _ in g["tris"]], np.int64)
+        o = nearest_atom(V[tri].mean(1), samples, ids)
+        own.append(o)
+        loose += [(gi, int(k)) for k in np.nonzero(o == -1)[0]]
+    parent = list(range(len(loose)))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+    corner = {}
+    for i, (gi, k) in enumerate(loose):
+        V = groups[gi]["verts"]
+        for vi in groups[gi]["tris"][k][0]:
+            key = tuple(int(round(c)) for c in V[vi])
+            j = corner.setdefault(key, i)
+            if j != i:
+                parent[find(i)] = find(j)
+    wall = {}
+    for i, (gi, k) in enumerate(loose):   # loose is in (group, triangle) order: walls numbered by first triangle
+        own[gi][k] = WALL - wall.setdefault(find(i), len(wall))
+    return own
+
+
+def mesh_collision(geo):
+    """(atoms, copy indexes) under tree nodes marked "mesh_collision": collision from their visible triangles"""
+    atoms, copies = set(), set()
+
+    def walk(t, on):
+        on = on or bool(t.get("mesh_collision"))
+        for c in t.get("children", []):
+            walk(c, on)
+        if on:
+            atoms.update(int(a) for a in t.get("atoms", []))
+            copies.update(int(k) for k in t.get("copies", []))
+    for t in (geo or {}).get("tree") or []:
+        walk(t, False)
+    return atoms, copies
+
+
+MESH_SURFACE = 0x3FFFFF00   # LP1's plain surface (lp2col: the template's plain one)
+
+
+def mesh_groups(S, per_mesh, atoms, M=None, own=-1):
+    """the atoms' stage triangles as collision groups (through 3 x 4 matrix M, cm), each triangle owned by own
+    (default: its atom); at most 65535 vertices per group"""
+    out, verts, tris, owner, vmap = [], [], [], [], {}
+    for m, ta in zip(S["meshes"], per_mesh):
+        sel = np.nonzero(np.isin(ta, list(atoms)))[0]
+        if not len(sel):
+            continue
+        P = positions(m["v"]).astype(np.float64)
+        if M is not None:
+            P = P @ M[:, :3].T + M[:, 3]
+        flip = M is not None and np.linalg.det(M[:, :3]) < 0
+        for k in sel:
+            if len(verts) > 0xFFFF - 3:
+                out.append(dict(verts=verts, tris=tris, own=owner))
+                verts, tris, owner, vmap = [], [], [], {}
+            ids = []
+            for i in m["tris"][k]:
+                key = (id(m), int(i))
+                if key not in vmap:
+                    vmap[key] = len(verts)
+                    verts.append(tuple(P[i]))
+                ids.append(vmap[key])
+            tris.append((tuple(ids[::-1]) if flip else tuple(ids), MESH_SURFACE))
+            owner.append(int(ta[k]) if own == -1 else own)
+    if tris:
+        out.append(dict(verts=verts, tris=tris, own=owner))
+    return out
 
 
 def apply_stage(S, per_mesh, geo):
@@ -339,7 +430,9 @@ def foreign_collision(lib, geo, key, project=None):
         groups = lp2col.read_sbc1(open(os.path.join(folder, p["collision"][key]), "rb").read())
         F = read_stage(library_stage(lib, rel, project)[0])
         fpm, n = atoms(F)
-        own = [{k: v for k, v in c.items() if k != "map"} for c in copies]   # apply_collision skips map copies
+        everything = geo.get("copies") or []
+        own = [dict({k: v for k, v in c.items() if k != "map"}, _i=next(i for i, e in enumerate(everything) if e is c))
+               for c in copies]   # apply_collision skips map copies; _i: the index in the geometry's list
         out, _ = apply_collision(groups, F, fpm, n, {"copies": own})
         extra += out[len(groups):]   # only the copies (apply_collision returns the groups, then the copies)
     return extra
@@ -393,35 +486,27 @@ def nearest_atom(points, samples, sample_ids):
 
 
 def apply_collision(groups, S, per_mesh, n, geo):
-    """lp2col.py groups (LP1 read) -> groups with the edits; and (moved, dropped, copied) triangle counts."""
+    """lp2col.py groups (LP1 read) -> groups with the edits; and (moved, dropped, copied) triangle counts.
+    Each returned group has "own": per triangle its atom, WALL - k for collision-only wall k (collision_owners),
+    or -2 - k for copy k of geo["copies"] (a copy's "_i" when the caller renumbered them)."""
     xf = {int(k): matrix(v) for k, v in (geo.get("xf") or {}).items()}
     hidden = set(int(a) for a in geo.get("hidden") or [])
-    copies = [c for c in geo.get("copies") or [] if not c.get("map")]
-    touched = set(xf) | hidden | {int(c["atom"]) for c in copies}
-    if not touched:
-        return groups, (0, 0, 0)
-    lo, hi, _ = atom_boxes(S, per_mesh, n)
-    t = sorted(touched)
-    region = (lo[t].min(0) - 2 * NEAR, hi[t].max(0) + 2 * NEAR)
-    samples, ids = atom_samples(S, per_mesh, region)
+    copies = [dict(c, _i=c.get("_i", i)) for i, c in enumerate(geo.get("copies") or []) if not c.get("map")]
+    mesh_atoms, mesh_copies = mesh_collision(geo)
+    walls_gone = {WALL - int(k) for k in geo.get("walls_hidden") or []}
+    owners = collision_owners(groups, S, per_mesh)
     moved = dropped = copied = 0
     out, extra = [], []
-    for g in groups:
+    for g, own in zip(groups, owners):
         V = np.asarray(g["verts"], np.float64).reshape(-1, 3)
         if not g["tris"]:
-            out.append(g)
+            out.append(dict(g, own=[]))
             continue
-        tri = np.array([t for t, _ in g["tris"]], np.int64)
-        cen = V[tri].mean(1)
-        inr = np.all((cen >= region[0]) & (cen <= region[1]), axis=1)
-        own = np.full(len(tri), -1, np.int64)
-        if inr.any():
-            own[inr] = nearest_atom(cen[inr], samples, ids)
         verts = [tuple(x) for x in g["verts"]]
-        vnew, keep = {}, []
+        vnew, keep, kept_own = {}, [], []
         for k, ((a, b, c), f) in enumerate(g["tris"]):
             o = int(own[k])
-            if o in hidden:
+            if o in hidden or o in mesh_atoms or o in walls_gone:
                 dropped += 1
                 continue
             if o in xf:  # its own transformed corners (a corner may be shared with an unmoved triangle)
@@ -435,11 +520,15 @@ def apply_collision(groups, S, per_mesh, n, geo):
                     ids_.append(vnew[key])
                 tt = tuple(ids_) if np.linalg.det(M[:, :3]) > 0 else tuple(ids_[::-1])
                 keep.append((tt, f))
+                kept_own.append(o)
                 moved += 1
             else:
                 keep.append(((a, b, c), f))
-        out.append(dict(g, verts=verts, tris=keep))
+                kept_own.append(o)
+        out.append(dict(g, verts=verts, tris=keep, own=kept_own))
         for cp in copies:
+            if cp["_i"] in mesh_copies:
+                continue
             sel = np.nonzero(own == int(cp["atom"]))[0]
             if not len(sel):
                 continue
@@ -452,8 +541,17 @@ def apply_collision(groups, S, per_mesh, n, geo):
                 (a, b, c), f = g["tris"][k]
                 tt = (rm[a], rm[b], rm[c])
                 ct.append((tt if np.linalg.det(M[:, :3]) > 0 else tt[::-1], f))
-            extra.append(dict(g, verts=cv, tris=ct))
+            extra.append(dict(g, verts=cv, tris=ct, own=[-2 - cp["_i"]] * len(ct)))
             copied += len(ct)
+    # collision from the visible triangles: the marked atoms where the editor put them, and marked copies
+    mesh = mesh_groups(S, per_mesh, mesh_atoms - hidden - set(xf)) if mesh_atoms - hidden - set(xf) else []
+    for a in sorted((mesh_atoms - hidden) & set(xf)):
+        mesh += mesh_groups(S, per_mesh, {a}, xf[a])
+    for cp in copies:
+        if cp["_i"] in mesh_copies:
+            mesh += mesh_groups(S, per_mesh, {int(cp["atom"])}, matrix(cp["m"]), -2 - cp["_i"])
+    extra += mesh
+    copied += sum(len(g["tris"]) for g in mesh)
     for g in out:
         if len(g["verts"]) > 0xFFFF:  # moved corners added past the group's limit: split off the moved part
             raise SystemExit("collision group over 65535 vertices after moving geometry")

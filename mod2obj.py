@@ -4,6 +4,7 @@
   mod2obj.py IN.rModel [OUT.obj]       one model
   mod2obj.py -r DIR                    every *.rModel under DIR, .obj written alongside
   mod2obj.py IN.rModel OUT.obj --pose MOTIONS.rMotionList[:N]   skinned meshes in motion N's first frame
+  mod2obj.py IN.rModel OUT.obj --one-copy   only the first of a model's copies (VS weapons hold one per mount)
 
 Header: 0x04 u16 version, 0x06 u16 bones, 0x08 u16 meshes, 0x0A u16 materials,
   0x0C vertex count, 0x10 index count, 0x18 vertex buffer size, 0x1C texture count,
@@ -163,8 +164,36 @@ def mesh_geometry(b, m, M):
     return verts, uvs, list(list_tris(idx))
 
 
-def export(src, dst, motions=None, motion=0):
-    """motions: an rMotionList's bytes: skinned meshes take that motion's first frame (lp2pose), else the bind pose."""
+def first_tree(b, M):
+    """mesh index -> keep, for models that hold several copies of themselves under separate root bones (VS weapons:
+    2-4 copies, one per mount): only the meshes skinned to the first root's tree. None when there is one tree."""
+    bones = read_bones(b)[0]
+    roots = [i for i, bn in enumerate(bones) if bn["parent"] == 255]
+    if len(roots) < 2:
+        return None
+
+    def root(i):
+        for _ in range(len(bones)):
+            if bones[i]["parent"] == 255:
+                return i
+            i = bones[i]["parent"]
+        return i
+    keep = {}
+    for k, m in enumerate(M["meshes"]):
+        enc = SKIN.get(m["fmt"])
+        if not enc or not m["icount"]:
+            keep[k] = True
+            continue
+        i0 = struct.unpack_from("<H", b, M["ib"] + m["istart"] * 2)[0]
+        o = M["vb"] + m["voff"] + (m["vbase"] + i0) * m["stride"]
+        bi = max(vertex_skin(b[o:o + m["stride"]], enc), key=lambda x: x[1])[0]
+        keep[k] = bi >= len(bones) or root(bi) == roots[0]
+    return keep
+
+
+def export(src, dst, motions=None, motion=0, one_copy=False):
+    """motions: an rMotionList's bytes: skinned meshes take that motion's first frame (lp2pose), else the bind pose.
+    one_copy: only the first copy of a model built as several (first_tree)."""
     b = open(src, "rb").read()
     M = read_model(b)
     mats = None
@@ -176,7 +205,10 @@ def export(src, dst, motions=None, motion=0):
     mtl = os.path.splitext(dst)[0] + ".mtl"
     out = [f"# {os.path.basename(src)}\nmtllib {os.path.basename(mtl)}\n"]
     nv = nt = skipped = 0
+    keep = first_tree(b, M) if one_copy else None
     for k, m in enumerate(M["meshes"]):
+        if keep is not None and not keep.get(k, True):
+            continue
         g = mesh_geometry(b, m, M)
         if g is None:
             skipped += 1
@@ -257,16 +289,18 @@ def find_variant(src, rel):
 
 
 def resolve_ci(root, rel):
-    cur = root
-    for part in rel.split("/"):
-        try:
-            names = {n.lower(): n for n in os.listdir(cur)}
-        except OSError:
-            return None
-        if part.lower() not in names:
-            return None
-        cur = os.path.join(cur, names[part.lower()])
-    return cur
+    """case-insensitive, trying every spelling: an archive can hold both model\\ak\\... and Model\\Ak\\... (uVsD4),
+    two folders here."""
+    part, _, rest = rel.partition("/")
+    try:
+        names = [n for n in os.listdir(root) if n.lower() == part.lower()]
+    except OSError:
+        return None
+    for n in names:
+        hit = resolve_ci(os.path.join(root, n), rest) if rest else os.path.join(root, n)
+        if hit:
+            return hit
+    return None
 
 
 def main():
@@ -291,7 +325,9 @@ def main():
             path, _, n = a[k + 1].partition(":")
             pose = (open(path, "rb").read(), int(n or 0))
             del a[k:k + 2]
-        M, skipped = export(a[0], a[1] if len(a) > 1 else os.path.splitext(a[0])[0] + ".obj", *(pose or ()))
+        one = "--one-copy" in a
+        a = [x for x in a if x != "--one-copy"]
+        M, skipped = export(a[0], a[1] if len(a) > 1 else os.path.splitext(a[0])[0] + ".obj", *(pose or (None, 0)), one_copy=one)
         print(f"bones {M['bones']} meshes {len(M['meshes'])} materials {len(M['mats'])} skipped {skipped}")
 
 

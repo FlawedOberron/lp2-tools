@@ -14,21 +14,20 @@ import argparse, hashlib, io, json, os, struct, subprocess, sys, tempfile
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import lp2mapc, lp2pieces, lp2project, mod2obj  # noqa: E402
+import lp2mapc, lp2pieces, lp2project, mod2obj, tex2dds  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 STAGE_FMT, STRIDE = 0x49B4F022, 28
 
 
 def png(rtex, max_size):
-    """rTexture -> PNG bytes (ImageMagick), or None."""
+    """rTexture -> PNG bytes, or None."""
     with tempfile.TemporaryDirectory() as t:
         dds = os.path.join(t, "t.dds")
         r = subprocess.run([sys.executable, os.path.join(HERE, "tex2dds.py"), rtex, dds], capture_output=True)
         if r.returncode or not os.path.exists(dds):
             return None
-        r = subprocess.run(["magick", dds + "[0]", "-resize", f"{max_size}x{max_size}>", "png:-"], capture_output=True)
-        return r.stdout if r.returncode == 0 and r.stdout else None
+        return tex2dds.dds_png(dds, max_size)
 
 
 def stage_meshes(path):
@@ -234,7 +233,7 @@ def build(game, folder, max_tex=1024, log=print):
     p = lp2project.load(folder)
     prev = os.path.join(folder, ".preview")
     os.makedirs(prev, exist_ok=True)
-    key = hashlib.sha1(json.dumps([p["stage"], max_tex, "geo2"], sort_keys=True).encode()).hexdigest()
+    key = hashlib.sha1(json.dumps([p["stage"], max_tex, "geo3"], sort_keys=True).encode()).hexdigest()
     geo, keyf = os.path.join(prev, "geo.json"), os.path.join(prev, "stage.key")
     if os.path.exists(geo) and os.path.exists(keyf) and open(keyf).read() == key:
         add_texture_sizes(prev)
@@ -247,7 +246,7 @@ def build(game, folder, max_tex=1024, log=print):
     stage = os.path.join(prev, "stage")
     log("stage model (lp2stage.py)")
     lp2mapc.tool("lp2stage.py", "--template", tmpl, "--out", stage, "--tex-dir", lp2mapc.STAGE_DIR,
-                 "--light", p["stage"].get("light_scale", 0.5),
+                 "--light", p["stage"].get("light_scale", 0.5), "--balance", p["stage"].get("light_balance", 1.0),
                  *[lp2project.path(folder, m) for m in p["stage"]["lp1_models"]], progress=(0.02, 0.6))
     model = os.path.join(stage, *lp2mapc.STAGE_DIR.split("\\"), "online00.rModel")
     tex_files = {}

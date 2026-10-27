@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """LP2 map project: the editable form of a custom map (what the Map Editor saves), and the LP1 importer.
 
-  lp2project.py import-lp1 sNNN.arc OUT_DIR --name "Area 921" [--tag T] [--size S] [--layout JSON] [--exclude TEXT]
+  lp2project.py import-lp1 sNNN.arc OUT_DIR --name "Area 921" [--tag T] [--size S] [--layout JSON] [--exclude TEXT] [--game LP2_DIR]
   lp2project.py check PROJECT_DIR
 
 A project is a folder: project.json + layout.json + assets/. lp2mapc.py compiles it to a Maps\\*.zip package.
@@ -12,7 +12,8 @@ project.json (format "lp2map", version 1):
                thumbnail: null or {image, zoom, at: [x, y]}
   base         stock: the stock online map the package is built on (0 = Desecration: shaders, effects, sounds)
   stage        lp1_models: LP1 stage models (lp2stage.py; textures beside them), light_scale (LP1 lightmap
-               -> vertex colour), exclude: name parts left out
+               -> vertex colour), light_balance (0..1, default 1: the baked light's colour cast removed, its
+               average made grey), exclude: name parts left out
   collision    lp1_move / lp1_bullet (LP1 atari / tama), lp1_physics (LP1 havok packfile),
                rebuild_physics (true: the physics follows edited pieces, new MOPP tree; lp2mopp.py)
   layout       layout.json (blender_lp2_map_markers.py / lp1points.py format: sets of points + objects per
@@ -74,7 +75,7 @@ def check(folder):
     return bad
 
 
-def import_lp1(arc, out, name, tag=None, size="large", layout=None, exclude=()):
+def import_lp1(arc, out, name, tag=None, size="large", layout=None, exclude=(), game=None):
     """An LP1 (PC / Colonies 360) stage archive -> a project: its stage models (+ textures), collision, physics
     and layout (lp1points.py, or an authored layout JSON)."""
     sid = os.path.basename(arc).split(".")[0].lower()
@@ -114,6 +115,11 @@ def import_lp1(arc, out, name, tag=None, size="large", layout=None, exclude=()):
              environment=dict(ENVIRONMENT),
              source=dict(lp1=os.path.basename(arc)))
     save(out, p)
+    if game and lp1_vs:   # LP1 layout -> explicit LP2 layout (lp2convert.py)
+        import lp2convert
+        lay = json.load(open(os.path.join(out, "layout.json")))
+        lp2convert.convert(lay, game)
+        json.dump(lay, open(os.path.join(out, "layout.json"), "w"), indent=1)
     return p
 
 
@@ -124,11 +130,12 @@ def main():
     i.add_argument("arc"); i.add_argument("out"); i.add_argument("--name", required=True)
     i.add_argument("--tag"); i.add_argument("--size", default="large", choices=("small", "medium", "large"))
     i.add_argument("--layout"); i.add_argument("--exclude", action="append", default=[])
+    i.add_argument("--game", help="LP2 folder: convert the LP1 layout to an explicit LP2 one (lp2convert.py)")
     c = sub.add_parser("check")
     c.add_argument("project")
     a = ap.parse_args()
     if a.cmd == "import-lp1":
-        p = import_lp1(a.arc, a.out, a.name, a.tag, a.size, a.layout, a.exclude)
+        p = import_lp1(a.arc, a.out, a.name, a.tag, a.size, a.layout, a.exclude, a.game)
         print(f"{a.out}: project \"{p['info']['name']}\" ({len(p['stage']['lp1_models'])} stage models, tag {p['info']['tag']})")
     else:
         bad = check(a.project)

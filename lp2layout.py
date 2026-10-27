@@ -4,7 +4,8 @@
   lp2layout.py [--lp1-vs] POINTS.json IN_DIR OUT_DIR
 
 Authored layouts (Blender lp2_map_markers export, "lp2": true): every marker carries its LP2 item id, tier
-(objset +0x04 controlStatus: 0 / 10 / 20; stock values kept unless a marker gives one), "item" on LP1-layout weapons (explicit pickup id, else the stock record's), "dig" / "dig_pile" (buried:
+(objset +0x04 controlStatus: 0 / 10 / 20; stock values kept unless a marker gives one), "item" on LP1-layout weapons (explicit pickup id, else the stock record's), "tier" on LP1-layout VS / weapons
+(the editor's VS tier; else the stock record's), "dig" / "dig_pile" (buried:
 digs to uncover, pile model 0-2; see put_dig) and game types ("modes": team, slayer,
 fox, datapost, counter, egg, vs; from the file name: TeamBattle/Team, KojinBattle/Slayer, FoxBattle/Fox,
 ...); a file gets only its mode's markers. VS, weapon and post groups are then exactly the markers
@@ -17,13 +18,17 @@ fox, datapost, counter, egg, vs; from the file name: TeamBattle/Team, KojinBattl
 POINTS.json: lp1points.py output. IN_DIR: the stock files as NAME.xfs (rInitPosSet) / NAME.osf (rObjSet),
 named as their arc entries (aArea_Online_00-TeamBattle-01, ...). Files are patched in place: the stock
 point and object counts, kinds and LP2 item ids stay, only positions and directions change, so no writer
-is needed. A file's variant (-00 .. -03) takes the LP1 layout with id '0<variant>' (mode 0).
+is needed. A file's variant (-00 .. -03) takes the set of that variant whose "modes" lists the file's game type
+(the editor's set game types), else the LP1 layout with id '0<variant>' (mode 0).
 rInitPosSet kinds -> LP1 point roles:
   0 FFA starts -> start, 1 / 2 team A / B -> team_a / team_b, 3 (5 in Kojin, 8 in Fox) -> k40,
   6 / 7 (one each, team modes) -> k30 / k31.  Roles run out -> wrap around.
 rObjSet: group 1 (VS) -> LP1 'vs' objects, group 4 (weapons) -> LP1 'weapon' objects, then its k40 points
 (14, unknown role), then its FFA starts; stock records beyond those are dropped (the group count
-shrinks). Groups 2 / 3 (posts, gimmicks) are left alone. Authored layouts: the mode-less -Common file's
+shrinks). Group 3 (posts, gimmicks) -> the layout's 'object' markers with an om71xx model (data posts, copies of
+a stock post record); the stock map's own posts and gimmicks never stay. The Common file is emptied.
+VS / weapons beyond the stock count (LP1's VS with --lp1-vs, "placed": true VS and any 'weapon'
+objects from the editor) are copies of the group's first record; a placed VS's type is its model ('vsXX'). Authored layouts: the mode-less -Common file's
 gimmicks (the stock map's, every mode) are dropped.
 Every record has its index within its group at +0x110 (u32, 0..n-1; an index
 duplicated is the suspected cause of pickups moving at match start), rewritten for cloned records.
@@ -49,9 +54,16 @@ def for_mode(lay, mode):
 
 
 def layout_for(points, name):
+    """the file's variant's set: the one whose "modes" (the editor's set game types) has the file's game type, else
+    the LP1 mode 0 set ('0<variant>')."""
     m = re.search(r"-(\d\d)$", name)
-    want = "0" + (m.group(1)[1] if m else "0")
-    return next((s for s in points["sets"] if want in s["ids"]), points["sets"][0])
+    v = m.group(1)[1] if m else "0"
+    mode = file_mode(name)
+    mine = [s for s in points["sets"] if any(str(i)[1:2] == v for i in s.get("ids", []))]
+    for s in mine:
+        if mode and mode in s.get("modes", []):
+            return s
+    return next((s for s in points["sets"] if "0" + v in s["ids"]), points["sets"][0])
 
 
 def patch_initpos(b, lay):
@@ -91,12 +103,17 @@ def put_dig(rec, q):
     struct.pack_into("<4I", rec, 0x7C, int(q.get("dig_pile", 0)) if n else 0, n, 0, 0)
 
 
+def put_tier(rec, q):
+    """the lobby's "VS on map" level the record needs (+0x04: 0 / 10 / 20); without one the stock record's stays."""
+    if "tier" in q:
+        struct.pack_into("<I", rec, 0x04, int(q["tier"]))
+
+
 def put_object(rec, q, g):
     struct.pack_into("<3f", rec, 0x40, *q["pos"])
     struct.pack_into("<f", rec, 0x54, q["yaw"])
     struct.pack_into("<H", rec, 0x1A, q["item"])
-    if "tier" in q:
-        struct.pack_into("<I", rec, 0x04, q["tier"])
+    put_tier(rec, q)
     if g in (1, 4):
         put_dig(rec, q)
     if g == 1 and "weapons" in q:  # 4 mounts x 5 B at 0x120: u8 on, u8 4 (weapon), u16 id, u8 0
@@ -153,11 +170,31 @@ def drop_gimmicks(b):
 def patch_objset(b, lay, lp1_vs=False):
     counts, recs, end = objset.parse(b)
     src = {1: [o for o in lay["objects"] if o["role"] == "vs"], 4: [o for o in lay["objects"] if o["role"] == "weapon"]}
-    # LP1 lists only ~2 weapon pickups per layout: the rest go on its k40 points, then its FFA starts
-    src[4] += [p for p in lay["points"] if p["role"] == "k40"] + [p for p in lay["points"] if p["role"] == "start"]
+    # LP1 lists only ~2 weapon pickups per layout: the rest go on its k40 points, then its FFA starts (not in an
+    # explicit layout, lp2convert.py: its weapon markers are all the pickups)
+    if not lay.get("explicit"):
+        src[4] += [p for p in lay["points"] if p["role"] == "k40"] + [p for p in lay["points"] if p["role"] == "start"]
+    posts = [o for o in lay["objects"] if o["role"] == "object" and str(o.get("model", "")).startswith("om71")]
     out, off, new_counts = bytearray(b[:0x30]), 0x30, {}
     for g in (1, 2, 3, 4):
         kept = 0
+        first = b[off:off + objset.SIZES[g]]
+        if g == 3:
+            # the stock map's posts and gimmicks -> the layout's posts only (copies of a stock post record)
+            recs = [b[off + i * objset.SIZES[3]:off + (i + 1) * objset.SIZES[3]] for i in range(counts[3])]
+            off += counts[3] * objset.SIZES[3]
+            tpl = next((q for q in recs if is_post(q)), None)
+            if posts and tpl is None:
+                print(f"  {len(posts)} posts dropped: the stock file has no post record to copy", file=sys.stderr)
+            for q in posts if tpl is not None else []:
+                rec = bytearray(tpl)
+                struct.pack_into("<3f", rec, 0x40, *q["pos"])
+                struct.pack_into("<f", rec, 0x54, q["yaw"])
+                struct.pack_into("<I", rec, 0x110, kept)
+                out += rec
+                kept += 1
+            new_counts[3] = kept
+            continue
         for i in range(counts[g]):
             rec = bytearray(b[off:off + objset.SIZES[g]])
             off += objset.SIZES[g]
@@ -169,24 +206,36 @@ def patch_objset(b, lay, lp1_vs=False):
                 struct.pack_into("<f", rec, 0x54, q["yaw"])  # rot y
                 if g in (1, 4):
                     put_dig(rec, q)
+                    put_tier(rec, q)
                 if g == 4 and "item" in q:  # explicit pickup (editor): this weapon whatever the loadout / stock record
                     struct.pack_into("<H", rec, 0x1A, int(q["item"]))
-                if g == 1 and lp1_vs:
-                    struct.pack_into("<H", rec, 0x1A, int(q["model"][2:], 16))  # LP2 VS type = LP1 id
+                if g == 1 and (lp1_vs or q.get("placed")):
+                    struct.pack_into("<H", rec, 0x1A, int(q["model"][2:], 16))  # LP2 VS type = LP1 id / the editor's pick
             out += rec
             kept += 1
-        # LP1 has more VS than the stock layout: copies of its first VS record
-        if g == 1 and lp1_vs and counts[1]:
-            first = b[0x30:0x30 + objset.SIZES[1]]
-            for q in src[1][counts[1]:]:
-                rec = bytearray(first)
-                struct.pack_into("<3f", rec, 0x40, *q["pos"])
-                struct.pack_into("<f", rec, 0x54, q["yaw"])
+        # more VS (LP1's, or placed in the editor) or weapons placed in the editor than the stock layout has:
+        # copies of the group's first record
+        extra = []
+        if g == 1:
+            extra = [q for q in src[1][counts[1]:] if lp1_vs or q.get("placed")]
+        elif g == 4:
+            extra = [q for q in src[4][counts[4]:] if q.get("role") == "weapon"]
+        if extra and not counts[g]:
+            print(f"  {len(extra)} extra group {g} markers dropped: the stock file has no record to copy", file=sys.stderr)
+            extra = []
+        for q in extra:
+            rec = bytearray(first)
+            struct.pack_into("<3f", rec, 0x40, *q["pos"])
+            struct.pack_into("<f", rec, 0x54, q["yaw"])
+            if g == 1:
                 struct.pack_into("<H", rec, 0x1A, int(q["model"][2:], 16))
-                put_dig(rec, q)
-                struct.pack_into("<I", rec, 0x110, kept)
-                out += rec
-                kept += 1
+            elif "item" in q:
+                struct.pack_into("<H", rec, 0x1A, int(q["item"]))
+            put_dig(rec, q)
+            put_tier(rec, q)
+            struct.pack_into("<I", rec, 0x110, kept)
+            out += rec
+            kept += 1
         new_counts[g] = kept
     struct.pack_into("<4H", out, 0x0A, *(new_counts[g] for g in (1, 2, 3, 4)))
     return bytes(out + b[end:]), counts, new_counts
@@ -229,9 +278,12 @@ def main():
             # the om835a windmill), placed for its own geometry -> dropped; posts stay per mode
             out, c0, c1 = drop_gimmicks(b)
             note = f" gimmicks {c0[2]}+{c0[3]}->{c1[2]}+{c1[3]}"
+        elif ext == ".osf" and not mode:
+            out, c0, c1 = drop_gimmicks(b)   # the Common file (above)
+            note = f" gimmicks {c0[2]}+{c0[3]}->{c1[2]}+{c1[3]}"
         elif ext == ".osf":
             out, c0, c1 = patch_objset(b, lay, lp1_vs)
-            note = f" VS {c0[1]}->{c1[1]}, weapons {c0[4]}->{c1[4]}"
+            note = f" VS {c0[1]}->{c1[1]}, posts+gimmicks {c0[3]}->{c1[3]}, weapons {c0[4]}->{c1[4]}"
         else:
             continue
         open(os.path.join(dst, f), "wb").write(out)

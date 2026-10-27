@@ -32,7 +32,7 @@ rSceneBox2 ('SBL\\0'): 0x0C vec3 max, 0x18 vec3 min (x / z used), 0x24 a 32 x 32
 (u32 zone, u32 blend zone, 14 x i32 list, -1 terminated) mapping the area to its lighting zones; every cell
 -> --zone (default: the most common), bounds -> --bounds.
 """
-import argparse, collections, json, os, struct, sys
+import argparse, collections, json, os, re, struct, sys
 import numpy as np
 
 
@@ -191,16 +191,22 @@ def camera(b, cam):
     return bytes(b)
 
 
-def effects(b, water=None):
-    """No weather (online00's falling ash): mWeatherRate keys -> 0. The water plane (mWaterExist) is off, or on
-    at height water (cm, mWaterHeight): below it players count as underwater."""
+def effects(b, water=None, sun=None, weather=0):
+    """Weather (mWeatherRate keys) -> weather (0 = none: online00's falling ash off; lp2weather.py adds the effect). The water plane (mWaterExist) is off, or on
+    at height water (cm, mWaterHeight): below it players count as underwater. The lens flare (lensf mPos, the
+    stock sun's direction ~1900 m out) -> the same distance towards sun."""
     b = bytearray(b)
     done = []
     for t in tracks(b):
+        if sun is not None and t["obj"] == "lensf" and t["name"] == "mPos" and t["keys"]:
+            put_all(b, t, unit(sun) * np.linalg.norm(vec(b, t)))
+            done.append("lens flare")
         if t["name"] in ("mWeatherRate", "mWaterExist", "mWaterHeight") and t["keys"]:
             for j in range(t["keys"]):
                 if t["name"] == "mWaterHeight":
                     struct.pack_into("<f", b, t["v"] + 4 * j, float(water or 0))
+                elif t["name"] == "mWeatherRate":
+                    struct.pack_into("<I", b, t["v"] + 4 * j, int(weather))
                 else:
                     struct.pack_into("<I", b, t["v"] + 4 * j, int(t["name"] == "mWaterExist" and water is not None))
             done.append(t["name"])
@@ -366,6 +372,8 @@ def main():
     ap.add_argument("--keep-atmosphere", action="store_true", help="keep the stock scattering (default: online01's clear sky)")
     ap.add_argument("--curves", help="tone curves 'R:a,b,c,d;G:...;B:...' (4 points each; online00 grades green)")
     ap.add_argument("--water", type=float, help="water plane height in cm (default: no water)")
+    ap.add_argument("--weather", default="0", help="weather strength 0..100 (mWeatherRate; default 0: none), or one per "
+                    "effect scheduler Efc0,Efc1,Efc2,Efc3 (maybe the 4 layouts; untested)")
     ap.add_argument("--env", help="JSON: sun_colour, sky_colour, ground_colour, ambient (absolute RGB), scatter "
                     "{mpAreaLScattering track: value}, lights [{type point | spot, pos, colour, brightness, ...}]")
     ap.add_argument("src")
@@ -399,7 +407,9 @@ def main():
         elif low.endswith(".rscheduler") and "_filter" in low:
             out, note = filt(b, sun, sky, bloom, curves, scatter), "filter"
         elif low.endswith(".rscheduler") and "_efc" in low:
-            out, done = effects(b, a.water)
+            rates = [int(float(x)) for x in a.weather.split(",")]
+            m = re.search(r"_efc(\d)", low)
+            out, done = effects(b, a.water, sun, rates[min(int(m.group(1)) if m else 0, len(rates) - 1)])
             note = "effects: " + (", ".join(done) + (f" (water at {a.water:g})" if a.water is not None else " off") if done else "nothing to change")
         elif low.endswith("_cam.rscheduler"):
             if not a.cam:

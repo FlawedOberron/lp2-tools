@@ -21,7 +21,7 @@ import argparse, json, os, re, struct, subprocess, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-import build_marker_assets, lp2props  # noqa: E402
+import build_marker_assets, lp2props, tex2dds  # noqa: E402
 
 TEX_MAX = 256
 
@@ -31,8 +31,7 @@ def progress(f, text=""):
 
 
 def png(path, max_size=TEX_MAX):
-    r = subprocess.run(["magick", path + "[0]", "-resize", f"{max_size}x{max_size}>", "png:-"], capture_output=True)
-    return r.stdout if r.returncode == 0 and r.stdout else None
+    return tex2dds.dds_png(path, max_size)
 
 
 def read_obj(path):

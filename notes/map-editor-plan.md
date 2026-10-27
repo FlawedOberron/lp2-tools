@@ -64,6 +64,8 @@ Possible path: Godot for the app; keep the Blender scripts as a power-user route
    (as lift.py did), multi-select, undo / redo.
 8. **Navmesh**: show (lp2nav), edit (poly flags, links, cover waypoints), generate from walkable collision
    (Recast-style: voxelise -> regions -> polys -> LNV), "Has Navmesh" flag in map.json -> bot match list.
+   Radar (user 2026-10-27): custom maps' blank radar is solved with the navmesh: render the radar map from
+   the navmesh + height (or the navmesh split into floors, one radar layer per floor).
 9. **Viewport + map info**: fly camera, lit preview (game sun / ambient / filter approximation, baked vertex
    light on / off), play-area bounds, radar map preview. Map info: name, thumbnail (capture from viewport),
    player count, size class, nav supported, modes supported.
@@ -232,3 +234,129 @@ havok mesh like the collision, plus other maps' pieces' tama). Fixed: other maps
 - Bones now have readable names (lp2bones.py; exporter reads names, aliases and jNNN); bare skeleton
   skeleton/lp2_skeleton.blend (lp2_skeleton.py make / rename). snowbunny.blend renamed 2026-10-23 (export
   byte-identical); custom joint ids now deterministic (sorted by depth, name).
+
+- 2026-10-25: Place tool (T, place.gd): floating window, Spawn / Weapon / VS dropdowns (VS list from notes/vs-ids.md),
+  click = ray onto the stage, drag = yaw on the level plane (Ctrl/Snap 15°). Markers get "placed": true and can be
+  deleted. lp2layout.patch_objset clones extra VS / weapons from the group's first record (placed VS type = model).
+  Spawns beyond the stock rInitPosSet counts are still not exported (no writer). Test: main.gd --screenshot X --place.
+  Untested in game.
+
+## 2026-10-26: fog window, pan, game types, preview start
+- Fog (H): environment.fog {on, start, end (cm), colour, density, height_on, height_top, height_bottom (cm),
+  height_colour, height_density}; lp2scenebox.from_project -> every zone's fog record (stock curves, type 4).
+  Presets = stock maps' priority-15 zone. View: Godot depth fog + height fog (approximation).
+- Middle drag pans the camera (grabbed point follows the mouse).
+- Sets: "modes" = LP2 game types exported from that set (lp2layout.layout_for); the '0V' set takes every
+  type no other set of the variant claims. Markers: "modes" (absent = all); inspector shows "Exists on".
+- Preview (P) starts on the spawn nearest the view's target; Place list: 29 more VS types (Akrid 0x1a/0xd4,
+  model fallback to any model\ folder; mod2obj resolve_ci tries every case spelling).
+
+## 2026-10-26 (later): collision view, install = export, weather
+- View collision (toggle): lp2colview.py PROJECT OUT.bin [--geometry FILE] -> movement collision with edits.
+- Install to game: save + export + copy (no .bak in the game folder). Place: "all 4 layouts" copies.
+- Map info: floating window (I).
+- Weather (lp2weather.py, environment.weather {type rain|rain_heavy|snow|ash, amount, layouts[4], volumes}):
+  ScrList type-16 entry (effect list, mPara1 slot) + its resources copied from the stock map (arcput --add;
+  efc_tex ls000N are resident); every zone weather [1,100,kind]; volumes = box zones (shape 0x10, prio 7,
+  weather [1,0,0]) added to the grid cells (cell = zi*32+xi) they cover; Efc0-3 mWeatherRate = amount
+  (per layout if Efc N = layout N: untested). Match Weather rule may override. UNTESTED in game.
+- Next asked: publish the custom map's name to players without the package (browser + lobby show DUMMY ####;
+  no refresh after download) -> xlive maps.cpp name lookup (MsgOnline 126 + slot) + session/lobby data.
+
+## 2026-10-26: custom map names for players without the package (xlive, built, NOT installed/tested)
+- Host publishes "13=<name>\n14=<name>": member data "mapnames" (packages.cpp NamesValue) and appended to
+  QoS answers after the title data (core/net.cpp QosExtra 'LP2X' + u16 size; older builds read only
+  dataSize, so compatible both ways). Clients keep (QoS data, text) pairs: NetQosExtraFor.
+- Lobby: PackagesSlotName prefers the lobby host's published name (g_lobbyHost from Reconcile).
+- Browser: the detail panel DX9 FUN_00e82360 / DX11 0xe92430 (thiscall(screen, entry); entries at
+  [screen+0x5c8]+0x288 + i*0x94 = the host's QoS data, map at +0x290+0x51) is detoured; while it runs the
+  MsgOnline 139/140 lookup answers with the name sent with that entry's QoS data. List rows show no map.
+- Lobby map vote (FUN_00e77f60) and results (FUN_00e78e00) go through the same lookup.
+
+## 2026-10-26: VS preload, pickup labels, collision pick / from mesh (untested in game)
+- No VS on custom maps: the game preloads VS / weapon archives from a hardcoded per-map list (DX9 0x1720f90,
+  {arcs, area 7, map}; arcs = {char* name, u32 flags} split by "dummy" into a common group + one group per
+  mode x layout, FUN_007c5570 / FUN_007c24b0). Map 00 has none of LP1's 0x50/51/53/56 or 0xe3, so they never
+  spawned. Fix: map.json "preload" (lp2mapc.preload_arcs: every VS / mounted weapon / pickup the objsets use);
+  xlive maps.cpp WithExtras appends the missing ones to the slot's common group (both exes via kDepRvas).
+- "VS on map" = objset +0x04 tier (0 / 10 / 20; None, then +tiers up to All). Ride id 0x0122 logged for the
+  flyer = Controls didn't see a VS (no archive loaded): retest fly controls after the preload fix.
+- LP1 weapon markers keep the stock record's pickup by index, which differs per game type file; k40 points
+  then FFA starts take the stock file's extra records. Editor labels now say so (pick a pickup to fix it).
+- Kill floor: editor setting exists, game ignores it. No stock mechanism found yet (map 00 AreaHit = radar
+  zones only; abyss camera via body +0xd6c bit 15 set from uControl::vf21). Needs the player health / a kill
+  call: find at runtime (fall to death on a stock map with pits, diff the body).
+- lp2colview.py writes per-triangle owners (atom, or -2-k for copy k); editor picks the piece under a click
+  when View collision is on (layer 3 trimesh, face_index).
+- Geometry tree "mesh_collision": true -> lp2pieces.mesh_collision / mesh_groups: the piece's imported
+  collision dropped, its visible triangles added (move + bullet + havok, all via apply_collision). Foreign
+  (other map) copies don't take it yet. Inspector: "Collision from mesh".
+- 2026-10-26 (later): VS tier rule decoded, DX9 FUN_00f71410 (rules +0x256 == 1, setting at DAT_018427b0+0x44):
+  setting 1 (None) hides all; 2 (Few) shows tier 0 only; 0 (Many) hides tier 20; 3 (All) shows all. Weapons:
+  FUN_00f71490 (+0x3c: 1 none, 2 / 0 tiers like VS, 4-7 force pickups < 0x35 to slot 0x30-0x33). Editor tier
+  dropdown labels follow this. In-game test still showed tier 0/10 VS missing: unexplained (pairs 2-4 m apart?).
+  LP1 VS records have u32 +0x08 = 0 / 1 (one of each near pair): probably LP1's VS-amount level, dropped by
+  lp1points.py -> should become the LP2 tier in the conversion pass. No stock LP2 objset uses VS 0x50/51/53/56/e3.
+  uWp00 = Anchor (grappling hook, "Anchor(uWp00)"); Machine Gun = uWp01. Editor PICKUP_ITEMS ids are wrong
+  (loadout message order, not weapon kinds). wp blend for skinning: lp2-assets/weapons/wp01.
+- 2026-10-26 conversion pass done: lp2convert.py (also lp2project.py import-lp1 --game): LP1 VS pairs ("lp1_pair"
+  from lp1points +0x04) -> pair 0 only; VS tiers vs50/51 0, vs53 10; vs56 -> weapon 0x1f (flying gear); LP1 weapons
+  -> slots / grenade slots (LP1_WEAPONS), VS weapons keep id if uWpXX.arc exists; the stock Team file's leftover
+  weapon records baked as weapon markers on k40 then starts (item + tier); "explicit" on layout + sets ->
+  lp2layout adds no point pickups. Area921 converted (88 VS dropped, 396 pickups). Editor PICKUP_ITEMS rewritten
+  (0x00 Anchor removed, fixed names = guesses), pickup markers show the item's library model (wp_XX).
+  VS weapon names (user, in game): 0x61 VS Rocket Pod, 0x62 VS Pile Bunker. Models hold 2-4 copies (one bone tree each).
+- Weapon id -> MsgCommon name index: DX9 FUN_008a1980 (u32 id 0x04KK00VV: KK kind, VV loadout variant). 0x0a T-ENG
+  Supplier, 0x0c Handgun, 0x15-0x19 x variant 0-4 = grenade families, 0x1a-0x23 all "Battle Armor" (gear),
+  0x30-0x34 x variant 0-6 = the loadout weapons (0x30/0 Machine Gun ...), VS: 41 Gatling, 42 Laser Rifle, 43 Rocket
+  Launcher, 44 Shotgun, 45 Grenade Launcher, 46 EM Laser, 47 Homing Laser, 60 Pile Bunker, 61 Rocket Pod,
+  62 Laser Lance, 63 Rifle, 6a 199-201. Unnamed (VS-only): 4e Missile Launcher (user), 50, 4d, 64-69, 6d...
+  User confirmed: 0x4E VS Missile Launcher (VS only), 0x47 Homing Laser; a VS-only 'missile pod' also exists (id not yet matched).
+
+## 2026-10-26: release builds (Windows zip + Linux AppImage), public repo lp2-mapedit
+- Bundled: Godot export + python-build-standalone 3.12 (numpy, Pillow) + the editor's lp2-tools closure (tools/).
+  ImageMagick dropped (tex2dds.dds_png, Pillow). runtool.py replaces the `sh -c 2>&1` wrapper.
+- Editor: Settings window (LP2 / LP1 / library folders, Steam auto-detect, first-run), New... (import an LP1 map).
+- ROADMAP (user, soon): wire all LP1 VS logic back in. Users building in the editor may place LP1 VS (vs50/51/53/56
+  and the rest of LP1's VS), and today vs56 doesn't work as a ride and only stock-LP2-used VS are known good.
+
+## 2026-10-27: ROADMAP (user): Kill Confirmed mode (rules mod, alongside Survival)
+- Design (user): a death drops a dog tag. An enemy touching it = confirm (team point), an ally touching it = deny.
+  Player score = kills + confirms + denies; the team score (what wins) = confirms only. Tags are touch volumes
+  (no button pickup) with easy-to-read ally/enemy colours (per viewer: ally vs enemy, not team A/B). Tags time out.
+- Plan: ride the Points rule (3 Points / 6 Team Points: per-player + team points, Points scoreboard column, cap 255).
+  Rules string key confirmed=1, lobby-gated like Survival (rule 3/6 only), create-screen row like Survival's.
+  Hook the rule 3/6 branch of the kill handler DX9 FUN_00f6b620: no stock steal; killer +1 player score, spawn tag.
+- Step 1 findings (decompile, 2026-10-27):
+  - Kills are replicated as net actions: cNetAct::vf13 (send) / vf28 (receive) -> FUN_008c7f90 -> FUN_00f6b620 on
+    every machine, so points are computed locally everywhere from the same kill events (deterministic hook OK).
+  - No touch pickup to reuse: sItemManager (DX9 vf3 0x805da0, size 0xbcd0) only tracks Weapon, Bomb (per player),
+    DataPost, VitalSuit, Akrid, ObjectModel; weapons need an active pickup. T-ENG is ability params, no item class.
+  - So tags are ours: tag list in the DLL (id, pos, victim team, expiry), proximity test each frame against player
+    positions; the host decides confirm/deny (first touch wins) and broadcasts on our Steam control channel
+    (core/net.cpp kControlChannel; transfer.cpp has 0x10001), applying the score via the points setters.
+  - Open: the visual. Need a runtime way to draw a coloured marker at a world position: a game effect spawn
+    (EFL), an object model, or reuse the Data Post beacon look; else a D3D overlay billboard (we have no world
+    draw yet). Next step: find an effect/model spawn call taking position + colour.
+
+## 2026-10-27: ROADMAP ideas (user)
+- **Mod options sub-menus**: plugins register pages (header + rows: toggle / choice / slider / key bind, values saved
+  per plugin) through the plugin API; the DLL adds an Options -> "Mods" entry with a sub-page per plugin; the list
+  scrolls (or pages with the shoulder buttons) when long. Controls + DevTools first (DevTools leaves its json).
+  Unknown: whether the game's options list has fixed slots / can scroll (decompile pass, DX9 + DX11 dumps).
+- **Lighting (pipe dream)**: real ray tracing is out (RTX Remix = DX9 fixed-function era, LP2 is all shaders; DX11
+  predates DXR; our own tracer = months). Realistic: recommend a ReShade preset (SSAO / SSGI), raise the sun
+  shadow map size / distance from the DLL, raise the dynamic light cap / shadowed lights if the shaders allow.
+- **Terrain builder (editor)**: heightmap terrain in chunks (65535-vertex collision groups), sculpt brushes
+  (raise / lower / smooth / flatten / ramp), holes (cell mask: caves, tunnels with placed meshes), paint layers,
+  and auto-paint by slope (e.g. 0-30 deg snow / sand fading to rock on cliffs) and height. Built into normal
+  meshes + collision (surface flags per layer: snow = DEEP_SNOW, etc.), later the navmesh. Open: how the game
+  draws the blend. Check whether stock stages have a multi-layer / vertex-colour blend shader; else bake the
+  painted result into per-chunk textures (memory cost) or split chunks by dominant material.
+- **Surface painter (editor, needed anyway; shares the terrain builder's brush)**: paint collision faces with game
+  surface tags: material (footsteps / effects / sinking: SNOW, DEEP_SNOW, ICE, SAND, METAL, WATER, LAVA, ... the
+  exe's ground list, see bugs-2026-10-21 #10) and behaviour bits (grapple-able or not, and whatever else the
+  flags hold). Per face in the project, written into the sbc surface flags (lp2col: 0x3fffff00 plain,
+  0x8000xxxx material bits; today every face gets one flags value). Overlay view colours faces by tag.
+  Prereq: decode the flag bits from stock rCollision (snowy campaign area for DEEP_SNOW; a stage with
+  non-grapple walls), DX9 + DX11 dumps for the readers.

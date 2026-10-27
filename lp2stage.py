@@ -136,6 +136,22 @@ def write_stage(dst, textures, materials, meshes):
     return data
 
 
+def balance(meshes, amount):
+    """per-channel gains on the baked light (vertex +24) so its average colour is grey, by amount (0..1)"""
+    cols = np.array([list(v[24:27]) for m in meshes for v in m["verts"]], np.float64)
+    if not len(cols):
+        return
+    mean = cols.mean(0)
+    gain = 1 + amount * (mean.mean() / np.maximum(mean, 1) - 1)
+    for m in meshes:
+        out = []
+        for v in m["verts"]:
+            c = bytes(int(min(255, round(x * g))) for x, g in zip(v[24:27], gain))
+            out.append(v[:24] + c + v[27:])
+        m["verts"] = out
+    print(f"baked light balanced: average {mean.round(1).tolist()} -> gains {gain.round(3).tolist()}")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--template", required=True)
@@ -143,6 +159,9 @@ def main():
     ap.add_argument("--tex-dir", required=True, help="archive folder of the model, e.g. scr\\Online\\online00")
     ap.add_argument("--prefix", default="lp1", help="texture name prefix")
     ap.add_argument("--light", type=float, default=1.0, help="lightmap -> vertex colour scale")
+    ap.add_argument("--balance", type=float, default=0.0,
+                    help="white balance of the baked light, 0..1: 1 scales each channel so the average is grey "
+                         "(LP1 lightmaps carry their map's colour cast)")
     ap.add_argument("--empty", action="append", default=[], metavar="NAME",
                     help="also write NAME.rModel holding one tiny triangle (stand-in for a stock model the area still loads)")
     ap.add_argument("models", nargs="+")
@@ -235,6 +254,8 @@ def main():
                                lo=pts.min(0), hi=pts.max(0)))
         print(f"{os.path.basename(path)}: {len(meshes)} meshes so far, {len(textures)} textures")
 
+    if a.balance > 0:
+        balance(meshes, a.balance)
     dst = os.path.join(out_dir, model_name + ".rModel")
     data = write_stage(dst, textures, materials, meshes)
     total = sum(len(m["verts"]) for m in meshes)
