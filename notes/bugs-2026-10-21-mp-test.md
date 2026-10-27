@@ -141,3 +141,11 @@ grenade slot / count, and whether clients run the patched path. Not looked at ye
   - #5: REVISED: +0x04 is controlStatus, not burial (reverted). Real cause: Desecration's buried records (+0x80 dig
     count) carried into Battlegrounds; lp2layout put_dig clears / sets them (see map-editor-plan.md). Needs a map rebuild.
   - Self-update: core/update.cpp (release builds: cmake -DXLS_RELEASE_TAG=test-YYYY-MM-DD[x]); "update": {"auto"}.
+
+## 2026-10-27
+- Battlegrounds rebuilt as an editor project (lp2-assets/projects/Battlegrounds: import-lp1 of the 360 s900.arc + Area921's
+  environment; layout11 was lost with an old scratchpad). Digs gone (0 of 1928 records buried). Spectating confirmed.
+- #9 GREEN still there, strong, on everything incl. players / VS, not the HUD (screens 20261027202051 / 202232; same in
+  10-22 and 10-26 shots). Ruled out in the built zip: every Filter0-3 (main + _v) neutral curves / bloom / sun colour;
+  SceneBox fog off in all 44 zones; Efc water / weather off; CM-01 grey SH. Test installed: Maps\BattlegroundsNoSky.zip
+  ("Battlegrounds (no sky)", tag lp1bgnsk, s900sky left out) -> if not green, the LP1 sky dome draws over the scene.
