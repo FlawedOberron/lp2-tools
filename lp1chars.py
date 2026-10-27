@@ -1,22 +1,25 @@
 #!/usr/bin/env python3
 """Lost Planet 1 character survey (PC nativePC, or the 360 Colonies nativeXenon tree from xiso.py):
 pull every human model (model\\hm\\hmXX) out of the LP1 archives, convert each to OBJ (lp1model.py) and render a preview, then a labelled contact sheet.
-  lp1chars.py LP1_NATIVEPC OUT_DIR [hm00 hm60 ...]      (default: every hm code found)
+  lp1chars.py [--kind vs] LP1_NATIVEPC OUT_DIR [hm00 hm60 ...]      (default: every code found)
+--kind: the model folder to survey (hm characters, the default; vs the VS: model\\vs\\vsXX\\vsXX).
 Needs: flatpak Blender (blender_preview.py) and ImageMagick `montage`.
 """
 import glob, os, re, subprocess, sys, zlib
 import arcx, lp1model
 
+KIND = "hm"
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
 def scan(native):
-    """-> {code: arc path} for the first archive holding model\\hm\\code\\code."""
+    """-> {code: arc path} for the first archive holding model\\KIND\\code\\code."""
     found = {}
     for arc in sorted(glob.glob(os.path.join(native, "**", "*.arc"), recursive=True)):
         data = open(arc, "rb").read()
         for name, *_ in arcx.entries(data):
-            m = re.fullmatch(r"model\\hm\\(hm\w+)\\(\w+)", name, re.I)  # the 360 has Hm70\Hm70
+            m = re.fullmatch(rf"model\\{KIND}\\({KIND}\w+)\\(\w+)", name, re.I)  # the 360 has Hm70\Hm70
             if m and m.group(1).lower() == m.group(2).lower():
                 found.setdefault(m.group(1).lower(), arc)
     return found
@@ -25,7 +28,7 @@ def scan(native):
 def extract(arc, code, out):
     data = open(arc, "rb").read()
     for name, th, cs, ds, _flags, off in arcx.entries(data):
-        if name.lower().startswith(f"model\\hm\\{code}\\"):
+        if name.lower().startswith(f"model\\{KIND}\\{code}\\"):
             raw = zlib.decompress(data[off:off + cs]) if cs != ds else data[off:off + cs]
             dst = os.path.join(out, *name.lower().split("\\")) + f".{th:#010x}"  # lower case: names differ in case
             os.makedirs(os.path.dirname(dst), exist_ok=True)
@@ -33,18 +36,22 @@ def extract(arc, code, out):
 
 
 def main():
-    if len(sys.argv) < 3:
+    global KIND
+    argv = sys.argv[1:]
+    if argv[:1] == ["--kind"]:
+        KIND, argv = argv[1], argv[2:]
+    if len(argv) < 2:
         raise SystemExit(__doc__)
-    native, out = sys.argv[1], os.path.abspath(sys.argv[2])
+    native, out = argv[0], os.path.abspath(argv[1])
     found = scan(native)
-    codes = sys.argv[3:] or sorted(found)
+    codes = argv[2:] or sorted(found)
     tree, pngs = os.path.join(out, "tree"), []
     for code in codes:
         if code not in found:
             print(f"{code}: not found")
             continue
         extract(found[code], code, tree)
-        model = os.path.join(tree, "model", "hm", code, f"{code}.0x1041bd9e")  # (extract lower-cases)
+        model = os.path.join(tree, "model", KIND, code, f"{code}.0x1041bd9e")  # (extract lower-cases)
         d = os.path.join(out, code)
         os.makedirs(d, exist_ok=True)
         try:

@@ -161,3 +161,19 @@ Generated 2026-10-19 from game data (no names: both games keep VS names in messa
 | 0xf5 |  |  |  |  |  |  |  |  |
 | 0xf8 |  |  |  |  | vsc4 | 2.0, 2.4, 2.4 | 9 | 10,12,15 |
 | 0xf9 |  |  |  |  | vsc5 | 2.0, 3.0, 2.7 | 10 |  |
+
+## 2026-10-27: LP1 VS in LP2 (vs66, vs82 ridden by the user on Battlegrounds)
+- LP2 ships them as leftovers: uVs66.arc = LP1 vs66 model + LP2 vs06's motion / collision / sounds / effects
+  (vs06 = the bike <-> robot transformer: transbike / transrobo / bikejump effects); uVs82.arc = vs82 model + vs32's
+  motion (vs32_mot) + vs32 / vs04 collision. Ride unit ids: 0x266 / 0x282 (Controls log "ride ... id 02XX0000").
+- User: get in / out animate fine; pilot seat offset wrong; weapon offset wrong; vs66 Q = a jump (vs06's transform)
+  where LP1's vs66 transformed into a sled-like form.
+- Joint ids: LP2 VS models put weapon mounts on 100 / 101, front points on 150 / 151, an effect point on 200
+  (uVs06::vf337 spawns effect 0x6a on joint 200, FUN_00b137f0). LP1 numbering differs: vs66 j31 = vs06 j100
+  (same spot), vs66 j100 = vs06 j150 (front tip), no 200; vs82 shoulder mounts j37 / j38 = vs32's 100 / 101,
+  vs82 100 / 101 = vs32 151 / 150, no 200.
+- Fix (UNTESTED): lp2vsjoints.py --preset vs66 / vs82 renumbers + adds 200; Mods\lp1_vs_fix\nativePC\arcLp2Xml\
+  autoArc\uVs66.arc / uVs82.arc (arcput of the game's arcs). Overlay only: other players need the mod too.
+- Seat: not a joint lookup we found (no other VS-class call with 100-200 constants); likely vs06's / vs32's ride
+  motion + class params, so the pilot sits where the vs06 / vs32 seat is. If still off: shift the model to fit.
+- vs66 transform: needs LP1's own vs66 motions (sled form) or disabling the vs06 transform; not done.

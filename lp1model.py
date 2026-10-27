@@ -132,7 +132,8 @@ def vertex(b, M, m, i):
             raise ValueError(f"mesh uses {len(used)} bone indices, palette has {len(m['pal'])}")
         else:
             m["rawmap"] = dict(zip(used, m["pal"]))
-    return pos, n, uv, [(m["rawmap"][r], w) for r, w in raw]
+    # a vertex no triangle uses (VS models have some) can carry indices the palette scan never saw: bone 0
+    return pos, n, uv, [(m["rawmap"].get(r, 0), w) for r, w in raw]
 
 
 def _vertex(b, M, m, i):
