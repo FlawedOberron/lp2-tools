@@ -37,8 +37,9 @@ import json, os, re, struct, sys
 import objset, xfs
 
 # per VS type: the stock loadout a marker without "weapons" gets (lp2vsfamilies.py; else the template record's)
+HERE = os.path.dirname(os.path.abspath(__file__))
 try:
-    VS_TYPES = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "vs_families.json")))["types"]
+    VS_TYPES = json.load(open(os.path.join(HERE, "vs_families.json")))["types"]
 except (OSError, ValueError, KeyError):
     VS_TYPES = {}
 
