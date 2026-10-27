@@ -360,3 +360,16 @@ havok mesh like the collision, plus other maps' pieces' tama). Fixed: other maps
   0x8000xxxx material bits; today every face gets one flags value). Overlay view colours faces by tag.
   Prereq: decode the flag bits from stock rCollision (snowy campaign area for DEEP_SNOW; a stage with
   non-grapple walls), DX9 + DX11 dumps for the readers.
+
+## 2026-10-27: VS families + weapon mounts in the editor (lp2vsfamilies.py -> vs_families.json; editor vsprops.gd)
+- Place: one entry per base-model family (41); inspector: Variant (the family's LP2 types), Right / Left arm weapon
+  (only mounts with a joint 100 / 101), shoulders shown as built-in. Marker "weapons": [[fitted, id] x4]; absent =
+  the type's stock loadout at build time (lp2layout.put_weapons). See notes/vs-mounts.md.
+
+## 2026-10-27: ROADMAP (user): additional VS weapons, first a Welding Beam
+- Hold to fire, continuous damaging beam, drains T-ENG while firing, can overheat.
+- Viability (not researched yet): the exe's weapon classes are fixed, so a new weapon = a new weapon id whose archive
+  reuses an existing class (a beam / laser one: 0x46 EM Laser, 0x47 Homing Laser, 0x62 Laser Lance) with new params /
+  effects, plus DLL hooks for what no class does (T-ENG drain per frame while firing; heat if no class has it).
+  New ids need registering like the parts carrier slots. First step: decompile the VS laser weapon classes (fire
+  modes, heat / energy fields in fields.tsv) and list what each already supports.

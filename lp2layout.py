@@ -36,6 +36,12 @@ duplicated is the suspected cause of pickups moving at match start), rewritten f
 import json, os, re, struct, sys
 import objset, xfs
 
+# per VS type: the stock loadout a marker without "weapons" gets (lp2vsfamilies.py; else the template record's)
+try:
+    VS_TYPES = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "vs_families.json")))["types"]
+except (OSError, ValueError, KeyError):
+    VS_TYPES = {}
+
 KIND_ROLE = {0: "start", 1: "team_a", 2: "team_b", 3: "k40", 6: "k30", 7: "k31"}
 # game type of a file, from its name (rInitPosSet and rObjSet name some modes differently)
 MODES = {"teambattle": "team", "team": "team", "kojinbattle": "slayer", "slayer": "slayer", "foxbattle": "fox",
@@ -116,9 +122,17 @@ def put_object(rec, q, g):
     put_tier(rec, q)
     if g in (1, 4):
         put_dig(rec, q)
-    if g == 1 and "weapons" in q:  # 4 mounts x 5 B at 0x120: u8 on, u8 4 (weapon), u16 id, u8 0
-        for i, (on, wid) in enumerate(q["weapons"][:4]):
-            struct.pack_into("<BBHB", rec, 0x120 + 5 * i, on, 4, wid, 0)
+    if g == 1:
+        put_weapons(rec, q)
+
+
+def put_weapons(rec, q):
+    """VS weapon mounts (RA, LA, RS, LS: 4 x 5 B at 0x120: u8 fitted, u8 4 (weapon), u16 id, u8 0): the marker's
+    "weapons", else its type's stock loadout (vs_families.json), else the template record's stay"""
+    t = struct.unpack_from("<H", rec, 0x1A)[0]
+    weapons = q.get("weapons") or VS_TYPES.get("%02x" % t, {}).get("weapons")
+    for i, (on, wid) in enumerate((weapons or [])[:4]):
+        struct.pack_into("<BBHB", rec, 0x120 + 5 * i, on, 4, wid, 0)
 
 
 def patch_objset_lp2(b, lay, templates):
@@ -211,6 +225,8 @@ def patch_objset(b, lay, lp1_vs=False):
                     struct.pack_into("<H", rec, 0x1A, int(q["item"]))
                 if g == 1 and (lp1_vs or q.get("placed")):
                     struct.pack_into("<H", rec, 0x1A, int(q["model"][2:], 16))  # LP2 VS type = LP1 id / the editor's pick
+                if g == 1 and (lp1_vs or q.get("placed") or "weapons" in q):   # a stock VS that stays keeps its own
+                    put_weapons(rec, q)
             out += rec
             kept += 1
         # more VS (LP1's, or placed in the editor) or weapons placed in the editor than the stock layout has:
@@ -229,6 +245,7 @@ def patch_objset(b, lay, lp1_vs=False):
             struct.pack_into("<f", rec, 0x54, q["yaw"])
             if g == 1:
                 struct.pack_into("<H", rec, 0x1A, int(q["model"][2:], 16))
+                put_weapons(rec, q)
             elif "item" in q:
                 struct.pack_into("<H", rec, 0x1A, int(q["item"]))
             put_dig(rec, q)
