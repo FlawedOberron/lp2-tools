@@ -27,5 +27,5 @@ fitted (shoulder guns are the VS's own, e.g. GTT-11 autocannons on vs05's 102 / 
 | vs56 vs66 | own ids | RA | LP1 leftovers |
 | vs03 (turret column) | 03 29 53 79 99 a9 | none (150-152 built in) | |
 | vs07 vs33 vs40 vs42, vscb (0x28 transport) | | none | built-in weapons |
-Raw per-type stock usage (most common weapons per mount): scratchpad vsmounts.txt, regenerate with the
-survey in this session's notes (rObjSet hash arcx.class_hash("rObjSet"), group 1, 0x140 B records).
+Raw per-type stock usage (most common weapons per mount, F = fitted): notes/vs-mounts-stock.txt; made by a
+scan of every game arc (rObjSet hash arcx.class_hash("rObjSet"), group 1, 0x140 B records).
