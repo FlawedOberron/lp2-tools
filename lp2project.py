@@ -119,6 +119,7 @@ def import_lp1(arc, out, name, tag=None, size="large", layout=None, exclude=(), 
         import lp2convert
         lay = json.load(open(os.path.join(out, "layout.json")))
         lp2convert.convert(lay, game)
+        lp2convert.map_vs(lay)
         json.dump(lay, open(os.path.join(out, "layout.json"), "w"), indent=1)
     return p
 

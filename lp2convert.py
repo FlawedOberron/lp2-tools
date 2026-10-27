@@ -9,7 +9,9 @@ Per marker set:
     pair-0 VS stay (a set with only pair-1 VS keeps those)
   - VS tiers (rObjSet +0x04, the lobby's VS setting: None none, Few tier 0, Many 0 + 10, All every tier):
     TIERS by LP1 VS, else 0
-  - vs56 (LP1's online bike; uVs56 doesn't work as a ride in LP2) -> the flying gear pickup, weapon 0x1f
+  - LP1 VS -> the closest LP2 VS (LP1_VS: same base model and role, LP2's own code / motions / seats / abilities;
+    the stock-online 0x2X family where there is one); the LP1 id stays as "lp1_model" (for skins later). LP2 ships
+    most LP1 ids too, but as leftovers (uVs66 = vs66 on vs06's motions: wrong seat, weapons, transform)
   - LP1 weapons -> an explicit LP2 pickup: LP1_WEAPONS by LP1 id (the slot of the matching loadout category, or
     the grenade slot), a carryable VS weapon (VS_PICKUPS) keeps its id, anything else becomes Slot: Standard
   - the pickups the export put on the k40 points, then the FFA starts (the stock Team file's weapon records left
@@ -22,6 +24,23 @@ import argparse, json, os, struct, sys, zlib
 import arcx, objset
 
 TIERS = {"vs50": 0, "vs51": 0, "vs53": 10}
+# LP1 VS -> LP2 VS type (user's identification 2026-10-27 + the base model each LP2 type loads, notes/vs-ids.md).
+# 0x2X = the family stock online maps use: 20 vs06 bike / robot, 21 vs16, 22 vs05 GTT-11 (riders on the legs, data
+# posts, repair), 23 vs04, 24 vs01, 25 vs00 PTX-140, 29 vs03, 2b vs32, 2c vs34. LP1-only shapes keep LP2's own type
+# of the same model (07, 30, 31, 33, 40, 41, 42, e0, e3). Bosses (vs40 GTF-11 with leg rockets + fixed laser,
+# vs00 / vs45 PTX-40 style) map to their nearest for now.
+LP1_VS = {
+    "vs00": "vs25", "vs08": "vs25", "vs45": "vs25", "vs46": "vs25", "vs50": "vs25",   # PTX-140 variants
+    "vs01": "vs24", "vs51": "vs24",
+    "vs03": "vs29", "vs13": "vs29", "vs44": "vs29", "vs53": "vs29",
+    "vs04": "vs23", "vs54": "vs23",
+    "vs05": "vs22", "vs55": "vs22",                                                   # GTT-11
+    "vs06": "vs20", "vs56": "vs20",                                                   # the bike
+    "vs16": "vs21", "vs66": "vs21",
+    "vs32": "vs2b", "vs82": "vs2b",
+    "vs34": "vs2c", "vs84": "vs2c",
+    "vs80": "vs30", "vs81": "vs31", "vs43": "vs42",
+}
 # LP1 weapon ids (LostPlanetDX9.exe's id-ordered weapon name table: Hm-Anchor, Machine-Gun, Rifle, Energy-Gun,
 # Anti-VS-Gun, ShotGun, Plasma-Gun, then H-Grenade = uWp08, every grenade type) -> the LP2 slot of the same loadout group
 # (DX9 FUN_008a1980: 0x30 Standard = Machine Gun / Gun Sword / Energy Gun, 0x31 Short Range = Shotgun / Revolver /
@@ -32,7 +51,6 @@ LP1_WEAPONS = {0x01: 0x30, 0x02: 0x32, 0x03: 0x30, 0x04: 0x33, 0x05: 0x31, 0x06:
 # the VS weapons a soldier can pick up and carry: the ones the game names (DX9 FUN_008a1980); the rest are VS-only
 VS_PICKUPS = {0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x60, 0x61, 0x62, 0x63}
 STANDARD = 0x30
-BIKE = 0x1F
 
 
 def stock_weapons(game):
@@ -63,7 +81,7 @@ def convert(lay, game):
     if lay.get("explicit"):
         return {}
     stock = stock_weapons(game)
-    n = dict(pairs=0, tiers=0, bikes=0, weapons=0, pickups=0)
+    n = dict(pairs=0, tiers=0, weapons=0, pickups=0)
     for s in lay["sets"]:
         objs = s["objects"]
         pairs = {o.get("lp1_pair") for o in objs if o.get("role") == "vs"}
@@ -73,11 +91,6 @@ def convert(lay, game):
         out = []
         for o in objs:
             o.pop("lp1_pair", None)
-            if o.get("role") == "vs" and o.get("model") == "vs56":
-                out.append(dict(kind=4, role="weapon", model="wp%02x" % BIKE, item=BIKE, tier=0, pos=o["pos"], yaw=o["yaw"],
-                                **{k: o[k] for k in ("modes",) if k in o}))
-                n["bikes"] += 1
-                continue
             if o.get("role") == "vs" and "tier" not in o:
                 o["tier"] = TIERS.get(o.get("model"), 0)
                 n["tiers"] += 1
@@ -100,6 +113,18 @@ def convert(lay, game):
     return n
 
 
+def map_vs(lay):
+    """LP1 VS ids -> LP2 types (LP1_VS), keeping the LP1 id as lp1_model; safe to run again (no target is a key)."""
+    n = 0
+    for s in lay["sets"]:
+        for o in s["objects"]:
+            if o.get("role") == "vs" and o.get("model") in LP1_VS:
+                o.setdefault("lp1_model", o["model"])
+                o["model"] = LP1_VS[o["model"]]
+                n += 1
+    return n
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--game", required=True)
@@ -109,12 +134,15 @@ def main():
     path = os.path.join(a.project, p["layout"]["file"])
     lay = json.load(open(path))
     n = convert(lay, a.game)
-    if not n:
-        print("already explicit: nothing to do")
+    mapped = map_vs(lay)
+    if not n and not mapped:
+        print("already explicit, no LP1 VS left: nothing to do")
         return
     json.dump(lay, open(path, "w"), indent=1)
-    print("%(pairs)d paired VS dropped, %(tiers)d VS tiers set, %(bikes)d vs56 -> flying gear, %(weapons)d LP1 weapons "
-          "mapped, %(pickups)d point pickups made visible" % n)
+    if n:
+        print("%(pairs)d paired VS dropped, %(tiers)d VS tiers set, %(weapons)d LP1 weapons mapped, %(pickups)d point "
+              "pickups made visible" % n)
+    print(f"{mapped} LP1 VS -> LP2 types")
 
 
 if __name__ == "__main__":
