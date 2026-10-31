@@ -699,3 +699,17 @@ havok mesh like the collision, plus other maps' pieces' tama). Fixed: other maps
 - Net: players send vitals 4/s to host (msg 3); host broadcasts actions (msg 4), owner applies on its own character update.
 - Requested next: spawn weapon / VS / VS weapon / grenade (with chance), spawn object at position, named script markers.
   All need RE of the game's unit/item spawn (sUnit create + item pickups); markers are editor+compiler only (easy).
+
+## Script markers + Spawn node (2026-10-31 night, BUILT, offline-tested only)
+- Markers = volumes with "marker": name (Add volume > Script marker; duplicate counts the name up). map.json
+  "script_markers" [{name lower, pos floor centre, size, yaw}] in natural name order. Nodes findmarkers (wildcards * ?
+  -> markers list), getmarker (first / random match -> marker var); list nodes take marker lists (kinds marker/markers).
+- Spawn: the akrid generator's recipe (uAk31 DX9 FUN_00a76540 / DX11 0xa85d80): copy the exe's template record, set
+  +0x1a item, +0x40 pos, +0x54 yaw, +0x04 tier 0, +0x74 user data 0; weapons cdecl FUN_00f72d40(rec, &unit, 0) (DX11
+  0xf82bd0), empty VS cdecl FUN_00f73f20(rec, 0, &unit, 0) (DX11 0xf83db0). Templates VA DX9 0x17b1bb0 (weapon 0x120) /
+  0x17b1950 (VS 0x140); DX11 0x17c1c10 / 0x17c19b0. Call sites checked: DX9 0xa7683c / 0xa76791, DX11 0xa8607c / 0xa85fd1.
+  Other spawners: FUN_00f72730 (characters, 0x130 records), f728a0 (group 2), f72ae0 (posts / gimmicks); dispatcher
+  cObjSetControl FUN_00f742f0. Host rolls chance/item/point, broadcasts msg 5; every machine spawns locally on its next
+  character update. Compiler adds the items' uWpXX / uVsXX to "preload".
+- RISKS (test first offline): crash in the spawner; spawned pickups / VS not network-linked between machines (each has
+  its own copy: pickup / boarding may desync); VS spawns honour the lobby VS setting; VS weapon mounts unset.

@@ -222,16 +222,18 @@ SCRIPT_TYPES = {
     "loop": (("in",), ("each", "done"), ()),
     "findmarkers": (("in",), ("found", "none"), ("text",)),
     "getmarker": (("in",), ("found", "none"), ("text", "random")),
+    "spawn": (("in",), ("spawned", "skipped"), ("kind", "items", "random")),
 }
 SCRIPT_VOLUME_NODES = ("enter", "volume", "setvalue")
 # the variables a node names, by field: number ("var"), player ("player"; optional on enter), list ("list")
 SCRIPT_VAR_NODES = ("set", "if", "random", "math", "listcount", "playerget", "loop")
-SCRIPT_PLAYER_NODES = ("enter", "list", "listget", "foreach", "playercheck", "playerget", "playeract", "getmarker")
+SCRIPT_PLAYER_NODES = ("enter", "list", "listget", "foreach", "playercheck", "playerget", "playeract", "getmarker",
+                       "spawn")
 SCRIPT_LIST_NODES = ("players", "list", "listremove", "listget", "listcount", "foreach", "findmarkers")
 SCRIPT_ITEM_NODES = ("list", "listget", "foreach")   # their "player" is a list entry: a marker for a markers list
 SCRIPT_OPERANDS = {"set": ("a",), "random": ("a", "b"), "math": ("a", "b"), "compare": ("a", "b"), "setvalue": ("a",),
                    "listremove": ("a",), "listget": ("a",), "playercheck": ("a",), "playeract": ("a",),
-                   "loop": ("a", "b")}
+                   "loop": ("a", "b"), "spawn": ("a",)}
 
 
 def script_volume_ids(p):
@@ -306,7 +308,7 @@ def script_manifest(p, log=print):
         lname = script_var_name(n.get("list", "")) or "players"
         of_markers = lname in marker_lists
         if n["type"] in SCRIPT_PLAYER_NODES:
-            marker = n["type"] == "getmarker" or (n["type"] in SCRIPT_ITEM_NODES and of_markers)
+            marker = n["type"] in ("getmarker", "spawn") or (n["type"] in SCRIPT_ITEM_NODES and of_markers)
             v = ref(n, "player", "marker" if marker else "player", "" if n["type"] == "enter" else "player")
             if v is not None:
                 e["player"] = v
@@ -648,6 +650,18 @@ def preload_arcs(game, osf_dir):
     return sorted(have[w] for w in want if w in have)
 
 
+def script_preload(game, p):
+    """the autoArc archives for what the scripts' Spawn nodes may make (uWpXX pickups, uVsXX VS)"""
+    auto = os.path.join(game, "nativePC", "arcLp2Xml", "autoArc")
+    have = {f[:-4].lower(): f[:-4] for f in os.listdir(auto) if f.lower().endswith(".arc")}
+    want = set()
+    for n in (p.get("scripts") or {}).get("nodes", []):
+        if n.get("type") == "spawn":
+            for i in n.get("items", []):
+                want.add(("uvs%02x" if n.get("kind") == "vs" else "uwp%02x") % int(i))
+    return sorted(have[w] for w in want if w in have)
+
+
 def compile_project(game, folder, out_zip, work=None, log=print, library=None):
     p = lp2project.load(folder)
     bad = lp2project.check(folder)
@@ -857,6 +871,7 @@ def compile_project(game, folder, out_zip, work=None, log=print, library=None):
         put(A["v"], {f: q for f, q in out.items() if f.lower() in in_v})
 
         preload = preload_arcs(game, ip_out)
+        preload = sorted(set(preload) | set(script_preload(game, p)))
         log(f"  preload: {len(preload)} VS / weapon archives")
         manifest = dict(name=info["name"], base=0, number=0, size=info["size"], preload=preload)
         manifest.update(gravity_manifest(p))
