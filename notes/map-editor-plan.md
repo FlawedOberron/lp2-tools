@@ -534,3 +534,35 @@ havok mesh like the collision, plus other maps' pieces' tama). Fixed: other maps
 - Game side open question: does any stock stage material blend layers (mask / vertex weights)? Else bake the painted
   layers into per-chunk textures (memory budget) and give collision faces the dominant layer's surface flags
   (shares the surface painter's flag decoding).
+- Collision flags on mesh polygons (user 2026-10-31): tag faces of placed / custom meshes with collision flags, e.g.
+  Friction's conveyor belts (find how stock Friction marks them: rCollision face flags vs a gimmick). Same face-tag
+  store + overlay as the surface painter.
+- Force zones (user 2026-10-31): a volume effect pushing players (grav lifts, underwater currents). Modes: fixed
+  direction, or pull toward / push from a target point; strength with a falloff gradient (by distance to the point or
+  across the box). DLL side like gravity volumes (InBox per frame, add to the player's velocity), DX9 + DX11.
+- Damage over time (user 2026-10-31, "soon"): a volume effect and a surface tag (painted collision faces / mesh
+  faces), with separate values for players and VS: per-second damage, or instant kill. Example: LP1 Crimson River's
+  lava flows kill players instantly and damage VS heavily over time. Check how LP1/LP2 do lava (surface material
+  LAVA in the ground list? a gimmick?) before writing a DLL tick. Heat-regen zones go the same way.
+
+## 2026-10-31: terrain step 1 BUILT (editor-tested + exported, NOT tested in game)
+- Editor terrain.gd: "Add terrain" (beside Add volume) = 64 x 64 m flat grid, 2 m cells, at the view's centre. Outliner
+  category "Terrain" (walls moved to category 7). Inspector: size X / Z (m, far side), cell size 0.5 / 1 / 2 / 4 m
+  (bilinear resample), material (blockout grid or a project material: its colour map shown, tiled by "Texture tile").
+  Selected: outline + see-through sides; Ctrl+drag a side (or the ground near an edge, from above) grows / shrinks it
+  by whole cells, edge heights carried out, world grid kept (main._face_at routes Ctrl+drag to terrain or volumes).
+  Gizmo: move only. Undo snapshots carry the heights (packed arrays); Save writes terrain/<id>.r32.
+  Editor shading: unshaded + vertex colours from a fixed sun (terrain.SUN), like the level's baked look.
+- Data: project "terrains" [{id, name, pos (cm, grid corner), cell (cm), cells [nx, nz], heights "terrain/<id>.r32",
+  material, tile, yaw 0}]; .r32 = (nx+1)(nz+1) float32 cm above pos y, rows along x. Format in lp2terrain.py docstring.
+- Compiler lp2terrain.py: builds PROJECT/terrain/<id>/ through lp2mesh.build_import (new d= / mesh= args: triangles
+  made in code), placed as "@project/terrain/<id>" copies (identity m, "rev" = build key so collision caches see
+  height changes). Blockout material terrain_blockout (green, 1 m). Cached by build.key. lp2mapc: terrains present ->
+  physics rebuilt (grenades land on it) even with rebuild_physics off.
+- Tested: main.gd --terrain-test (add, Ctrl+drag +x / -z, spike stays in world, undo / redo, save) on a scratch copy
+  of Battlegrounds; full export: terrain in stage + bake + move / bullet collision + rebuilt physics (MOPP check ok).
+- Seen, not looked into: the pieces path (any geometry edit, now also any terrain) drops 41 move-collision triangles on
+  Battlegrounds ("41 dropped"); existing behaviour, check it doesn't open holes.
+- Not yet: View collision (lp2colview) and the lighting-bake preview don't include terrain; holes; layers.
+- NEXT (step 2): Edit button (lock + grey others, terrain-only), toolbar, brush (size / strength / falloff, pen
+  pressure toggles), height raise / lower + smooth, per-stroke undo.

@@ -440,11 +440,13 @@ def box_tris(lo, hi):
     return c, np.array([t for a, b, cc, d in quads for t in ((a, b, cc), (a, cc, d))], np.int64)
 
 
-def build_import(game, project, name, log=print):
-    d = imp_dir(project, name)
+def build_import(game, project, name, log=print, d=None, mesh=None):
+    """d: the piece's folder (default imports/<name>); mesh: (parts, file materials) made in code (lp2terrain.py)
+    instead of reading import.json's source file"""
+    d = d or imp_dir(project, name)
     cfg = json.load(open(os.path.join(d, "import.json")))
     progress(0.05, "reading " + cfg["source"])
-    parts, fmats = read_mesh(os.path.join(d, "source", cfg["source"]))
+    parts, fmats = mesh or read_mesh(os.path.join(d, "source", cfg["source"]))
     parts = [p for p in parts if len(p["T"])]
     # Blender objects named COL_<name>: collision only (for <name>, which then isn't collision itself)
     cols = [p for p in parts if is_col(p.get("obj", ""))]

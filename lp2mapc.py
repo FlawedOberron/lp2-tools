@@ -526,6 +526,10 @@ def compile_project(game, folder, out_zip, work=None, log=print, library=None):
                  "--light", p["stage"].get("light_scale", 0.5), "--balance", p["stage"].get("light_balance", 1.0), *sum((["--empty", s] for s in STUBS), []), *models,
                  progress=(0.05, 0.55))
         geo = lp2pieces.load_geometry(P(p["geometry"]["file"])) if p.get("geometry") else {}
+        if p.get("terrains"):   # terrain areas: built as pieces of the project's own, placed as copies
+            import lp2terrain
+            report(0.555, "terrain")
+            geo = lp2terrain.add_copies(game, folder, p, geo, log)
         pieces = None
         if lp2pieces.edited(geo):  # the editor's moved / hidden / copied level geometry
             report(0.56, "level geometry edits")
@@ -611,7 +615,7 @@ def compile_project(game, folder, out_zip, work=None, log=print, library=None):
         if p["collision"].get("lp2_physics"):   # an LP2 map's own (map space, as the stage)
             shutil.copyfile(P(p["collision"]["lp2_physics"]), W("hav.rHkCollision"))
             log("  physics: the LP2 map's own" + (" (it keeps the original geometry)" if pieces else ""))
-        elif pieces and p["collision"].get("rebuild_physics"):
+        elif pieces and (p["collision"].get("rebuild_physics") or p.get("terrains")):   # terrain: grenades land on it
             log("  " + rebuild_physics(P(p["collision"]["lp1_physics"]), tmpl["havonline00"], W("hav.rHkCollision"),
                                        pieces, geo, library, folder))
         else:
