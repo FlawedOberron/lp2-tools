@@ -149,3 +149,22 @@ grenade slot / count, and whether clients run the patched path. Not looked at ye
   10-22 and 10-26 shots). Ruled out in the built zip: every Filter0-3 (main + _v) neutral curves / bloom / sun colour;
   SceneBox fog off in all 44 zones; Efc water / weather off; CM-01 grey SH. Test installed: Maps\BattlegroundsNoSky.zip
   ("Battlegrounds (no sky)", tag lp1bgnsk, s900sky left out) -> if not green, the LP1 sky dome draws over the scene.
+
+## 2026-10-28 green: sky ruled out, bisecting
+- Battlegrounds (no sky) still green; Area921 green too. Shots: everything monochrome green incl. indoors, players,
+  VS, minimap feed (HUD not) = a full-screen grade, not light / fog. Live ModCache s13 _v.arc filters are neutral
+  (the top-level ModCache/maps/*/nativePC copies with online00 curves are stale 10-20 leftovers, not used).
+- Bisection maps installed (lp2-assets/maps/greentest): Green A = stock Desecration repack (lp2pack), B = A + our
+  arcXmlTmpPC (main + _v: layout, light, filter), C = A + our autoArc (_scr stage model / textures), D = A + our
+  sa shader packages + detail .tde + MaterialSkipList. Mixed from BattlegroundsNoSky.zip. Collision is stock in C/D.
+- Result (user): only Green B (our arcXmlTmpPC main + _v) is green -> not the stage model, shaders, detail.
+  Round 2 installed (A-D removed from Maps, kept in greentest): B1 = stock + our Light / Filter schedulers only,
+  B2 = stock + our SceneBox2 / FieldSet / Scr / Efc schedulers, B3 = our arcs with those 16 put back to stock
+  (layout, collision, water stubs, cam, radar, areahit, scrlist).
+- 2026-10-28 GREEN ROOT CAUSE (bisection F green / L normal / FC normal): ColorCorrectFilter mToneCurveR/G/B are
+  64 B per key = x[4] (input), 1[4], y[4] (output), 1[4] (+16 B pad after the last key). lp2light wrote our 4
+  "neutral" numbers into x only, leaving online00's y: R .69 -> .17, B .71 -> .40, G ~1:1 = everything green.
+  Fixed: lp2light writes x and y per key (--curves 'R:x0..x3/y0..y3;...'), lp2project.curves() (old flat form ->
+  neutral 0,.333,.667,1), presets carry each stock map's curves. Battlegrounds + Area921 rebuilt (neutral) and
+  installed, untested. Editor: Lighting > Colour grading (grade presets, curves.gd drag editor, bloom colour,
+  viewport preview via Environment adjustment_color_correction LUT).

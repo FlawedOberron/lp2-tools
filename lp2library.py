@@ -14,16 +14,23 @@ LP1: every map archive (ZZPack2/s8xx, s9xx) from the PC install, and the ones on
 (.preview: geo.json / geo.bin / 256 px textures, lp2preview.py), so the editor can show the map's pieces.
 Index entry: {key "lp1_s900", name, source "LP1", group "Maps", map "lp1/s900", from "PC" | "360"}.
 LP2 objects: every uOm model as one props map LIB/lp2/props (lp2props.py; built once, again with --force),
-index entry {key "lp2_props", name "LP2 objects", group "Props", map "lp2/props"}. Progress lines: @progress F TEXT (lp2mapc / the editor).
+index entry {key "lp2_props", name "LP2 objects", group "Props", map "lp2/props"}.
+LP2 maps: every stock online map's stage pieces and collision as a map LIB/lp2/mapNN (lp2stockmaps.py; each built
+once, again with --force), index entry {key "lp2_mapNN", name "LP2 map Desecration", group "Maps", map "lp2/mapNN"}. Progress lines: @progress F TEXT (lp2mapc / the editor).
 Nothing from the games is shipped: the library is made from the user's own installs.
 """
 import argparse, json, os, re, struct, subprocess, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-import build_marker_assets, lp2props, tex2dds  # noqa: E402
+import build_marker_assets, lp2props, lp2stockmaps, tex2dds  # noqa: E402
 
 TEX_MAX = 256
+GLB_VERSION = 2   # LIB/lp2/glb_version: older GLBs are rebuilt from the kept raw models (2: normals, brightness)
+# LP2's VS / weapon colour maps are dark (VS 00: mean 28 / 255): the game's shader lifts them (specular, reflections),
+# the editor's plain material doesn't, so each model's maps are brightened together: towards BRIGHT_MEAN on average,
+# its 95th percentile at most to BRIGHT_TOP (the few brighter ones clip), by at most BRIGHT_MAX
+BRIGHT_MEAN, BRIGHT_TOP, BRIGHT_MAX = 110.0, 240.0, 4.0
 
 
 def progress(f, text=""):
@@ -32,6 +39,31 @@ def progress(f, text=""):
 
 def png(path, max_size=TEX_MAX):
     return tex2dds.dds_png(path, max_size)
+
+
+def brightened(paths):
+    """colour map paths -> {path: PNG bytes}, all lifted by one gain (see BRIGHT_MEAN)"""
+    import io
+    import numpy as np
+    from PIL import Image
+    ims = {}
+    for p in paths:
+        data = png(p)
+        if data:
+            ims[p] = np.asarray(Image.open(io.BytesIO(data)).convert("RGBA"), np.float32)
+    if not ims:
+        return {}
+    rgb = np.concatenate([a[..., :3].reshape(-1, 3) for a in ims.values()])
+    mean, top = float(rgb.mean()), float(np.percentile(rgb, 95))
+    gain = max(1.0, min(BRIGHT_MEAN / max(mean, 1.0), BRIGHT_TOP / max(top, 1.0), BRIGHT_MAX))
+    out = {}
+    for p, a in ims.items():
+        a = a.copy()
+        a[..., :3] = np.clip(a[..., :3] * gain, 0, 255)
+        b = io.BytesIO()
+        Image.fromarray(a.astype(np.uint8), "RGBA").save(b, "PNG")
+        out[p] = b.getvalue()
+    return out
 
 
 def read_obj(path):
@@ -80,19 +112,32 @@ def read_obj(path):
 
 
 def normals(P, T):
-    n = [[0.0, 0.0, 0.0] for _ in P]
-    for a, b, c in T:
-        ax, ay, az = P[a]
-        ux, uy, uz = P[b][0] - ax, P[b][1] - ay, P[b][2] - az
-        vx, vy, vz = P[c][0] - ax, P[c][1] - ay, P[c][2] - az
-        f = (uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx)
-        for i in (a, b, c):
-            n[i][0] += f[0]; n[i][1] += f[1]; n[i][2] += f[2]
-    out = []
-    for x, y, z in n:
-        l = (x * x + y * y + z * z) ** 0.5 or 1.0
-        out.append((x / l, y / l, z / l))
-    return out
+    """-> P, T, N with smooth normals; a vertex shared by faces facing opposite ways (both sides of a plate: their
+    normals cancelled out, so the model looked black) is split, each side keeping its own normal. P, T: index lists
+    (the extra vertices copy their original: the callers' other per-vertex lists use remap)"""
+    import numpy as np
+    Pa, Ta = np.asarray(P, np.float64), np.asarray(T, np.int64).reshape(-1, 3)
+    fn = np.cross(Pa[Ta[:, 1]] - Pa[Ta[:, 0]], Pa[Ta[:, 2]] - Pa[Ta[:, 0]])          # area weighted
+    area = np.linalg.norm(fn, axis=1)
+    keep = area > 1e-10                                     # no flat faces (some models' shadow shells are all flat)
+    Ta, fn, area = Ta[keep], fn[keep], area[keep]
+    # each vertex's reference: its largest face; corners facing against it go to a copy
+    ref = np.zeros((len(Pa), 3))
+    order = np.argsort(area)                                                      # largest written last
+    for k in range(3):
+        ref[Ta[order, k]] = fn[order]
+    flip = np.einsum("ij,ij->i", fn[:, None, :].repeat(3, 1).reshape(-1, 3), ref[Ta.ravel()]).reshape(-1, 3) < 0
+    T2 = Ta + flip * len(Pa)
+    N = np.zeros((2 * len(Pa), 3))
+    for k in range(3):
+        np.add.at(N, T2[:, k], fn)
+    used = np.unique(T2)
+    remap = np.full(2 * len(Pa), -1, np.int64)
+    remap[used] = np.arange(len(used))
+    N = N[used]
+    N /= np.maximum(np.linalg.norm(N, axis=1, keepdims=True), 1e-12)
+    src = used % len(Pa)                                                          # the original of each vertex
+    return src.tolist(), remap[T2].tolist(), N.tolist()
 
 
 def write_glb(dst, meshes, tex):
@@ -107,10 +152,14 @@ def write_glb(dst, meshes, tex):
         return len(views) - 1
 
     lo, hi = [1e9] * 3, [-1e9] * 3
+    lifted = brightened(sorted({tex[m] for m in meshes if m in tex}))
     for mat, (P, U, T, _seen) in meshes.items():
         if not T:
             continue
-        N = normals(P, T)
+        src, T, N = normals(P, T)
+        if not T:
+            continue
+        P, U = [P[i] for i in src], [U[i] for i in src]
         pmin = [min(p[i] for p in P) for i in range(3)]
         pmax = [max(p[i] for p in P) for i in range(3)]
         lo = [min(lo[i], pmin[i]) for i in range(3)]
@@ -125,7 +174,7 @@ def write_glb(dst, meshes, tex):
         acc.append(dict(bufferView=view(struct.pack(f"<{3 * len(T)}I", *[i for t in T for i in t]), 34963), componentType=5125,
                         count=3 * len(T), type="SCALAR"))
         m = dict(name=mat, doubleSided=True, pbrMetallicRoughness=dict(metallicFactor=0.0, roughnessFactor=1.0))
-        data = png(tex[mat]) if mat in tex else None
+        data = lifted.get(tex[mat]) if mat in tex else None
         if data:
             images.append(dict(bufferView=view(data), mimeType="image/png"))
             textures.append(dict(source=len(images) - 1))
@@ -157,8 +206,11 @@ def lp2_names():
     names = {}
     for tid, model, _size, flying in A.VS_TYPES:
         names[f"vs_{tid:02x}"] = ("Vehicles", f"VS {tid:02X} ({model}{', flying' if flying else ''})")
+    defaults = {0x30: "Assault Rifle", 0x31: "Shotgun", 0x32: "Rifle", 0x33: "Rocket Launcher", 0x34: "Shield", 0x0c: "Handgun",
+                0x15: "Frag Grenade", 0x16: "Gum Grenade", 0x17: "Disk Grenade", 0x18: "Dummy Grenade",
+                0x19: "Plasma Grenade"}   # a slot's default (variant 00) weapon
     for w in sorted({w for w, _ in A.PICKUPS} | set(A.VS_WEAPONS)):
-        names[f"wp_{w:02x}"] = ("Weapons", f"Weapon {w:02X}" + (" (VS mount)" if w in A.VS_WEAPONS else ""))
+        names[f"wp_{w:02x}"] = ("Weapons", defaults.get(w) or f"Weapon {w:02X}" + (" (VS mount)" if w in A.VS_WEAPONS else ""))
     for _item, model, title in A.POSTS:
         names[f"om_{model[2:]}"] = ("Objects", title)
     return names
@@ -210,20 +262,29 @@ def lp1_maps(a, lib):
 def get(a):
     lib = os.path.abspath(a.lib)
     raw = os.path.join(lib, "raw", "lp2")
-    if a.force or not os.path.exists(os.path.join(raw, "manifest.json")):
+    have = os.path.join(raw, "manifest.json")
+    none = os.path.join(raw, "no_model.json")   # keys the game has no model for: not ripped again
+    skip = set(json.load(open(none))) if os.path.exists(none) and not a.force else set()
+    missing = [] if a.force or not os.path.exists(have) else \
+        sorted(set(lp2_names()) - set(json.load(open(have))) - skip)
+    if a.force or not os.path.exists(have) or missing:
+        # a library from an older version: rip only the models it lacks (build_marker_assets.py KEY ...)
         progress(0.0, "Ripping LP2 models (VS, weapons, posts)")
-        r = subprocess.run([sys.executable, os.path.join(HERE, "build_marker_assets.py"), a.game, raw])
+        r = subprocess.run([sys.executable, os.path.join(HERE, "build_marker_assets.py"), a.game, raw] + missing)
         if r.returncode:
             raise SystemExit("build_marker_assets.py failed")
+        json.dump(sorted(skip | (set(lp2_names()) - set(json.load(open(have))))), open(none, "w"))
     manifest = json.load(open(os.path.join(raw, "manifest.json")))
     names = lp2_names()
     os.makedirs(os.path.join(lib, "lp2"), exist_ok=True)
     assets = []
     keys = sorted(manifest)
+    ver = os.path.join(lib, "lp2", "glb_version")
+    stale = not os.path.exists(ver) or open(ver).read().strip() != str(GLB_VERSION)
     for i, key in enumerate(keys):
         progress(0.5 + 0.5 * i / len(keys), f"Converting {key}")
         dst = os.path.join(lib, "lp2", key + ".glb")
-        if a.force or not os.path.exists(dst):
+        if a.force or stale or not os.path.exists(dst):
             meshes, tex = read_obj(os.path.join(raw, manifest[key]))
             size = write_glb(dst, meshes, tex)
         else:
@@ -236,11 +297,22 @@ def get(a):
         if size:
             e["size"] = size
         assets.append(e)
+    open(ver, "w").write(str(GLB_VERSION))
     if a.lp1 or a.lp1_360:
         assets += lp1_maps(a, lib)
     if a.force or not os.path.exists(os.path.join(lib, *lp2props.REL.split("/"), "project.json")):
         progress(0.0, "LP2 objects (props)")
         assets.append(lp2props.build(a.game, lib))
+    nums = lp2stockmaps.numbers(a.game)
+    for i, num in enumerate(nums):   # LP2's own maps' pieces
+        if a.force or not os.path.exists(os.path.join(lib, *lp2stockmaps.rel(num).split("/"), "project.json")):
+            try:
+                lp2stockmaps.build(a.game, lib, num, span=(i / len(nums), (i + 1) / len(nums)))
+            except SystemExit as e:
+                print(f"lp2 map {num}: skipped ({e})")
+                continue
+        if os.path.exists(os.path.join(lib, *lp2stockmaps.rel(num).split("/"), "project.json")):
+            assets.append(lp2stockmaps.entry(num))
     old = {}
     idx = os.path.join(lib, "index.json")
     if os.path.exists(idx):   # keep sizes measured by an earlier run

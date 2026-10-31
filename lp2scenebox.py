@@ -144,7 +144,9 @@ STOCK_CURVE = ([0.0] + [1.0] * 7) * 2
 def from_project(p):
     """project.json environment.fog (the editor's Fog window: on, start, end (cm), colour, density, height_on,
     height_top, height_bottom (cm), height_colour, height_density) -> a fog dict. The colours' alpha is the
-    strength (stock: 0 = none). Distance type 4 and blend frame 1 as most stock zones."""
+    strength (stock: 0 = none). The distance type isn't read by the game (the fog unit's own types are used, with
+    the zone's colour, start / end and curves); the DLL keeps online maps' atmosphere mode off so this fog draws
+    (gravity.cpp ColourFog). Blend frame 1."""
     if not p:
         return None
     if any(k.startswith("m") for k in p):   # already the game's fields
@@ -153,7 +155,7 @@ def from_project(p):
     if not (dist or low):
         return None
     c, hc = list(p.get("colour", [0.6, 0.65, 0.7]))[:3], list(p.get("height_colour", [0.6, 0.65, 0.7]))[:3]
-    return {"mControlFlag": 1, "mDistanceType": 4, "mFogStart": float(p.get("start", 2000.0)),
+    return {"mControlFlag": 1, "mDistanceType": 0, "mFogStart": float(p.get("start", 2000.0)),
             "mFogEnd": float(p.get("end", 30000.0)), "mDistanceCurve": STOCK_CURVE,
             "mFogColor": c + [float(p.get("density", 0.5)) if dist else 0.0],
             "mRCurve": STOCK_CURVE, "mGCurve": STOCK_CURVE, "mBCurve": STOCK_CURVE, "mFogBlendFrame": 1.0,

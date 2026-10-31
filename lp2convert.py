@@ -47,10 +47,16 @@ LP1_VS = {
 # Flamethrower, 0x32 Long Range = Rifle / Plasma Gun, 0x33 Heavy Weapons = Rocket Launcher / Hand Cannon / Plasma
 # Cannon, 0x34 Support; grenade slots 0x15 Normal, 0x16 Gum, 0x17 Disc, 0x18 Release, 0x19 Plasma). LP1 VS weapons
 # (0x40 up) are LP2's under the same ids (same models; LP1's VS table: VS-Anchor, Vulcan, Laser-Rifle, Missile, ...)
-LP1_WEAPONS = {0x01: 0x30, 0x02: 0x32, 0x03: 0x30, 0x04: 0x33, 0x05: 0x31, 0x06: 0x32, 0x08: 0x15}
+# Colonies' handguns etc. (user, from the models): 0c pistol -> the handgun (0x0c), 0d revolver -> Short Range,
+# 0e hand cannon -> Heavy Weapons, 0f flamethrower -> Short Range
+LP1_WEAPONS = {0x01: 0x30, 0x02: 0x32, 0x03: 0x30, 0x04: 0x33, 0x05: 0x31, 0x06: 0x32, 0x08: 0x15,
+               0x0C: 0x0C, 0x0D: 0x31, 0x0E: 0x33, 0x0F: 0x31}
 # the VS weapons a soldier can pick up and carry: the ones the game names (DX9 FUN_008a1980); the rest are VS-only
 VS_PICKUPS = {0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x60, 0x61, 0x62, 0x63}
 STANDARD = 0x30
+# the deployable bike (vsd1: uWp1d / 1f / 21 / 23.arc), carried like gear: never put on LP1's points from the stock
+# records (they'd sit in rooms and doorways); markers from an earlier fill become Slot: Standard (fix_gear)
+GEAR = {0x1D, 0x1F, 0x21, 0x23}
 
 
 def stock_weapons(game):
@@ -102,6 +108,7 @@ def convert(lay, game):
         # what lp2layout.patch_objset gave the points: stock record i -> (LP1 weapons + k40 + starts)[i]
         lp1_weapons = sum(o.get("role") == "weapon" for o in s["objects"])
         recs = stock.get(str(s["ids"][0])[1:2] if s.get("ids") else "0", stock.get("0", []))[lp1_weapons:]
+        recs = [r for r in recs if r[0] not in GEAR]
         points = [p for p in s["points"] if p["role"] == "k40"] + [p for p in s["points"] if p["role"] == "start"]
         for p, (item, tier) in zip(points, recs):
             out.append(dict(kind=4, role="weapon", model="wp%02x" % item, item=item, tier=tier, pos=p["pos"],
@@ -110,6 +117,18 @@ def convert(lay, game):
         s["objects"] = out
         s["explicit"] = True   # lp2layout.patch_objset reads it per set
     lay["explicit"] = True
+    return n
+
+
+def fix_gear(lay):
+    """bike gear an earlier fill put on LP1's points (a marker at a k40 / start point) -> Slot: Standard."""
+    n = 0
+    for s in lay["sets"]:
+        spots = {tuple(p["pos"]) for p in s["points"] if p["role"] in ("k40", "start")}
+        for o in s["objects"]:
+            if o.get("role") == "weapon" and o.get("item") in GEAR and tuple(o["pos"]) in spots:
+                o["item"], o["model"] = STANDARD, "wp%02x" % STANDARD
+                n += 1
     return n
 
 
@@ -135,6 +154,9 @@ def main():
     lay = json.load(open(path))
     n = convert(lay, a.game)
     mapped = map_vs(lay)
+    gear = fix_gear(lay)
+    if gear:
+        print(f"{gear} bike gear pickup(s) on LP1 points -> Slot: Standard")
     if not n and not mapped:
         print("already explicit, no LP1 VS left: nothing to do")
         return

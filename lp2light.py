@@ -22,7 +22,8 @@ first (day) one here, then:
   OBJ_Light mColor x --tint; spot lights (PL_SpotLight, placed for the stock map) mColor -> 0.
   The atmosphere (mpAreaLScattering Rayleigh / Mie / density) -> online01's clear sky (--keep-atmosphere keeps it).
   Optional filter overrides: --sky (mpAreaLScattering mSunColor: the sky's tint), --bloom (mBloomColor),
-  --curves (ColorCorrectFilter mToneCurveR/G/B, kind 14: 4 f32 curve points).
+  --curves (ColorCorrectFilter mToneCurveR/G/B, kind 14: 64 B per key = 4 f32 x (input), 4 f32 1.0, 4 f32 y
+  (output), 4 f32 1.0; 4 points per channel. online00's are near neutral: x .11 .24 .73 -> y .05 .17 .75 for R).
 Effect schedulers (tool\\scheduler\\Effect\\*_EfcN_*): weather (mWeatherRate, int; online00 50 = its falling
 ash) off; the water plane (mWaterExist, bool + mWaterHeight, f32 cm) off, or on at --water; 4 B per key.
 --cam: the start (intro) camera, event_LP2\\rt_online\\onlineNN_cam.rScheduler (EventMotionCamera): its
@@ -146,8 +147,11 @@ def filt(b, sun, sky=None, bloom=None, curves=None, scatter=SCATTER):
                     struct.pack_into("<3f", b, t["v"] + 16 * j, *v)
                 else:
                     struct.pack_into("<f", b, t["v"] + 4 * j, v)
-        elif t["kind"] == 14 and curves and t["name"] in curves:  # tone curve: 4 f32 points
-            struct.pack_into("<4f", b, t["v"], *curves[t["name"]])
+        elif t["kind"] == 14 and curves and t["name"] in curves:  # tone curve: per key x[4], 1[4], y[4], 1[4]
+            xs, ys = curves[t["name"]]
+            for j in range(t["keys"]):
+                struct.pack_into("<4f", b, t["v"] + 64 * j, *xs)
+                struct.pack_into("<4f", b, t["v"] + 64 * j + 32, *ys)
         elif t["kind"] == 7 and t["keys"] >= 1:
             value = vec(b, t)
             if t["name"] == "mSunDir":
@@ -320,7 +324,8 @@ def add_lights(b, lights):
 
 
 def presets(game):
-    """every stock online map's day light and atmosphere (key 0 of Light0 / Filter0) -> {map number: {...}}"""
+    """every stock online map's day light, atmosphere and tone curves (key 0 of Light0 / Filter0) -> {map number: {...}}
+    (curves: {R / G / B: [[x0..x3], [y0..y3]]})"""
     import glob
     import lp2mapc
     keys = {("OBJ_Light", "mDir"): "sun", ("OBJ_Light", "mColor"): "sun_colour",
@@ -336,6 +341,9 @@ def presets(game):
             if not (bn.endswith("_light0_windows") or bn.endswith("_filter0_windows")):
                 continue
             for t in tracks(b):
+                if t["keys"] and t["kind"] == 14 and t["name"].startswith("mToneCurve"):
+                    d.setdefault("curves", {})[t["name"][-1]] = [[round(x, 4) for x in struct.unpack_from("<4f", b, t["v"] + o)]
+                                                                 for o in (0, 32)]
                 if not t["keys"] or t["kind"] not in (7, 8):
                     continue
                 v = list(struct.unpack_from("<3f", b, t["v"])) if t["kind"] == 7 else struct.unpack_from("<f", b, t["v"])[0]
@@ -370,7 +378,8 @@ def main():
     ap.add_argument("--sky", help="scattering sun colour R,G,B (sky tint; online00 day: 10,9.02,4 = yellow)")
     ap.add_argument("--bloom", help="bloom colour R,G,B")
     ap.add_argument("--keep-atmosphere", action="store_true", help="keep the stock scattering (default: online01's clear sky)")
-    ap.add_argument("--curves", help="tone curves 'R:a,b,c,d;G:...;B:...' (4 points each; online00 grades green)")
+    ap.add_argument("--curves", help="tone curves 'R:x0,x1,x2,x3/y0,y1,y2,y3;G:...;B:...' (4 points each, input x -> "
+                    "output y; 0,.33,.67,1/0,.33,.67,1 = neutral)")
     ap.add_argument("--water", type=float, help="water plane height in cm (default: no water)")
     ap.add_argument("--weather", default="0", help="weather strength 0..100 (mWeatherRate; default 0: none), or one per "
                     "effect scheduler Efc0,Efc1,Efc2,Efc3 (maybe the 4 layouts; untested)")
@@ -384,7 +393,10 @@ def main():
     bounds = [float(x) for x in a.bounds.split(",")] if a.bounds else None
     rgb = lambda x: np.array([float(v) for v in x.split(",")]) if x else None
     sky, bloom = rgb(a.sky), rgb(a.bloom)
-    curves = {f"mToneCurve{c.split(':')[0]}": [float(v) for v in c.split(':')[1].split(",")] for c in a.curves.split(";")} if a.curves else None
+    curves = {f"mToneCurve{c.split(':')[0]}": [[float(v) for v in half.split(",")] for half in c.split(":")[1].split("/")]
+              for c in a.curves.split(";")} if a.curves else None
+    if curves and any(len(v) != 2 or len(v[0]) != 4 or len(v[1]) != 4 for v in curves.values()):
+        raise SystemExit("--curves: each channel needs x0,x1,x2,x3/y0,y1,y2,y3")
     env = json.load(open(a.env)) if a.env else {}
     colours = {k: env[n] for k, n in ((("OBJ_Light", "mColor"), "sun_colour"), (("HemiSphereLight", "mColor"), "sky_colour"),
                                        (("HemiSphereLight", "mRevColor"), "ground_colour"),

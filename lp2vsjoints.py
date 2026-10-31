@@ -5,11 +5,14 @@
   lp2vsjoints.py IN.rModel OUT.rModel [OLD=NEW ...] [+NEW@PARENT ...]
 
 OLD=NEW   joint id OLD becomes NEW (all renames apply at once, so 100=151 37=100 swaps cleanly)
-+NEW@P    a new joint NEW on joint P (after the renames), sitting exactly on it: identity local matrix, P's
-          inverse bind (stock LP2 models add 200 this way: vs06 on j15, vs32 on j11)
++NEW@P[:X,Y,Z]  a new joint NEW on joint P (after the renames), sitting on it or offset by X,Y,Z in P's space:
+          translation-only local matrix, inverse bind = P's x inverse(local) (stock LP2 models add 200 on the
+          parent: vs06 on j15, vs32 on j11)
 Presets (the ids LP2's own vs06 / vs32 models use for the same spots):
   --preset vs66   31=100 100=150 +200@15      (j31 = vs06's weapon mount j100, j100 = its front tip j150)
   --preset vs82   37=100 38=101 100=151 101=150 +200@11   (shoulder mounts = vs32's 100 / 101)
+  --preset vs40   the vs82 one for the LP1 boss GTF-11 (same skeleton, without vs82's front points 100 / 101:
+                  re-added at vs82's offsets as 151 / 150)
 
 LP2 rModel ('MOD\\0' v0xC5): u16 bone count at 6, bone block at the offset in 0x24 = n x 24 B records
 (u8 joint id, u8 parent bone index, ...), n x 64 B local matrices, n x 64 B inverse binds, then a 256 B
@@ -21,8 +24,17 @@ import struct, sys
 PRESETS = {
     "vs66": ["31=100", "100=150", "+200@15"],
     "vs82": ["37=100", "38=101", "100=151", "101=150", "+200@11"],
+    "vs40": ["37=100", "38=101", "+151@11:-40.4,37.8,111", "+150@11:40.4,37.8,111", "+200@11"],
 }
-IDENTITY = struct.pack("<16f", 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1)
+
+
+def translate(x, y, z):
+    return (1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, y, z, 1)
+
+
+def mul(a, b):
+    """4x4 row-major product a x b"""
+    return tuple(sum(a[r * 4 + k] * b[k * 4 + c] for k in range(4)) for r in range(4) for c in range(4))
 
 
 def fix(b, ops):
@@ -44,15 +56,18 @@ def fix(b, ops):
     for o in ops:
         if not o.startswith("+"):
             continue
-        new, parent = map(int, o[1:].split("@"))
+        new, at = o[1:].split("@")
+        parent, _, xyz = at.partition(":")
+        new, parent = int(new), int(parent)
+        x, y, z = map(float, xyz.split(",")) if xyz else (0.0, 0.0, 0.0)
         if new in ids:
             raise SystemExit(f"joint {new} already exists")
         p = ids.index(parent)
         rec = bytearray(recs[p])
         rec[0], rec[1] = new, p
         recs.append(rec)
-        local.append(IDENTITY)
-        inv.append(inv[p])
+        local.append(struct.pack("<16f", *translate(x, y, z)))
+        inv.append(struct.pack("<16f", *mul(struct.unpack("<16f", inv[p]), translate(-x, -y, -z))))
         ids.append(new)
     remap = bytearray([255] * 256)
     for i, j in enumerate(ids):

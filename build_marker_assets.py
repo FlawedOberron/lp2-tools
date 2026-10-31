@@ -103,7 +103,8 @@ def main():
     jobs = [("Vs", "vs", f"{v[0]:02x}", f"vs_{v[0]:02x}") for v in A.VS_TYPES]
     fixed = sorted({w for w, _ in A.PICKUPS} | set(A.VS_WEAPONS))
     # VS weapons 41 / 43 / 44 have empty archives (listed as slots) but a model in aPowerOn
-    jobs += [("Wp", "wp", f"{w:02x}", f"wp_{w:02x}") for w in fixed if w not in A.SLOTS or w in A.VS_WEAPONS]
+    # loadout slots (30-34), the handgun (0c) and grenades (15-19) show their default (variant 00) weapon
+    jobs += [("Wp", "wp", f"{w:02x}", f"wp_{w:02x}") for w in sorted(set(fixed) | set(A.SLOTS))]
     jobs += [("Om", "om", p[1][2:], f"om_{p[1][2:]}") for p in A.POSTS]
     manifest = {}
     if sys.argv[3:]:
@@ -144,6 +145,8 @@ def main():
                 pose = ["--pose", os.path.join(tmp, *mot.split("\\")) + ".rMotionList:0"]
             obj = os.path.join(dst, leaf + ".obj")
             one = ["--one-copy"] if kind == "wp" else []   # VS weapons: one copy per mount in the model
+            if kind == "wp" and int(tag, 16) in A.SLOTS and int(tag, 16) not in A.VS_WEAPONS:
+                one += ["--variant", "00"]   # a slot model holds every weapon of the slot
             subprocess.run([sys.executable, os.path.join(HERE, "mod2obj.py"), src, obj] + pose + one, check=True, capture_output=True)
             if kind == "vs" and lowest(obj) < -60:
                 # motion 0 isn't a standing idle for this type (flying, bosses, a few odd ones): bind pose, lowest point

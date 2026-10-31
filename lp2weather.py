@@ -2,21 +2,23 @@
 """Weather for a custom map (project.json environment.weather, the editor's Fog and weather window):
 
   environment.weather = {"type": "rain" | "rain_heavy" | "snow" | "ash", "amount": 0..100,
-                         "volumes": [{"pos": [x, y, z], "size": [x, y, z]}, ...]}   (cm; volumes: no weather)
+                         "volumes": [{"pos": [x, y, z], "size": [x, y, z], "amount": 0..100}, ...]}
+  (cm; volumes: weather limiters, amount % of the map's weather inside, 0 / missing = none)
 
 How the game draws it (from the stock maps):
   - the scenery list (rScrList) has a type 16 entry naming the weather's effect list (mPara1: a layer slot;
     underwater is slot 6); its textures / models / sub-lists are named inside it as path strings
   - every SceneBox zone has weather [on, amount 0..100, kind]; stock interiors are [1, 0, 0] at priority 7 under
     the whole-map zone (priority 15): no weather inside
-  - the effect scheduler's mWeatherRate (int) is the weather's strength (stock 0 / 35 / 50; the match's Weather
+  - the effect scheduler's mWeatherRate (int) is the weather's strength (stock 0 / 35 / 50): the game draws
+    10 x rate x zone amount % particles while rate <= 50 (above, zone amounts don't limit; over 989 none; the match's Weather
     rule may override it)
 The effect lists come from the stock map that has them (an explicit choice: the one thing a custom map takes from
 another map). One SceneBox for every layout: weather is the same on all four.
 
   lp2weather.py deps --game GAME TYPE      list the resources a weather type needs
 """
-import argparse, os, re, struct, sys, zlib
+import argparse, math, os, re, struct, sys, zlib
 
 import arcx, xfsedit
 
@@ -29,6 +31,7 @@ PRESETS = {
     "ash": ("00", "effect\\efl_SCR\\online\\online_00\\online00_fallout", 2, 1, "Ash (Desecration)"),
 }
 SHAPE_BOX = 0x10   # 6 f32: one corner, the other (stock: max then min)
+SHAPE_QUAD = 2     # 8 i32: 4 x / z corners, 3 f32: bottom y, height, 0 (stock interiors)
 VOLUME_PRIORITY = 7
 
 
@@ -70,9 +73,34 @@ def scrlist(b, kind):
     raise SystemExit("the scenery list has no free entry for the weather")
 
 
+def inside_quad(c, f, p):
+    """the game's shape 2 test (DX11 FUN_0086d090): ints c = x0 z0 .. x3 z3, f = bottom, height; p = x, y, z"""
+    x0, z0, x1, z1, x2, z2, x3, z3 = c
+    if not f[0] <= p[1] <= f[0] + f[1]:
+        return False
+    px, pz, ax, az, bx, bz, dx, dz = p[0] - x3, p[2] - z3, x2 - x3, z2 - z3, x0 - x3, z0 - z3, x1 - x3, z1 - z3
+    return (ax * pz <= az * px and bz * px <= bx * pz and (az - dz) * (px - dx) <= (ax - dx) * (pz - dz)
+            and (bx - dx) * (pz - dz) <= (bz - dz) * (px - dx))
+
+
+def corners(v):
+    """a limiter's x / z corners (centred "pos", "size", "yaw" degrees: Godot's turn about y, game axes) in the
+    order the game's quad test wants (the stock zones': checked by inside_quad on the centre)"""
+    (x, _y, z), (sx, _sy, sz) = v["pos"], v["size"]
+    a = math.radians(float(v.get("yaw", 0.0)))
+    c, s = math.cos(a), math.sin(a)
+    cs = [(x + lx * c + lz * s, z - lx * s + lz * c)
+          for lx, lz in ((-sx / 2, -sz / 2), (sx / 2, -sz / 2), (sx / 2, sz / 2), (-sx / 2, sz / 2))]
+    flat = [int(round(q)) for xz in cs for q in xz]
+    if not inside_quad(flat, (-1.0, 2.0), (x, 0.0, z)):
+        cs = cs[::-1]
+    return cs
+
+
 def zones(b, weather):
     """a SceneBox (after lp2light: bounds set, one zone in every cell) with weather on in every zone and the
-    no-weather volumes added as box zones (weather [1, 0, 0], priority 7) in the cells they cover."""
+    limiter volumes added as box zones (weather [1, amount, kind], priority 7, like stock interiors' [1, 0, 0]) in the
+    cells they cover."""
     import lp2scenebox
     sb = lp2scenebox.parse(b)
     kind = weather.get("type")
@@ -92,24 +120,34 @@ def zones(b, weather):
         (x, y, z), (sx, sy, sz) = v["pos"], v["size"]
         hi = (x + abs(sx) / 2, y + abs(sy) / 2, z + abs(sz) / 2)
         lo = (x - abs(sx) / 2, y - abs(sy) / 2, z - abs(sz) / 2)
-        out += struct.pack("<II6f3I", VOLUME_PRIORITY, SHAPE_BOX, *hi, *lo, 1, 0, 0) + tail
+        amount = int(round(float(v.get("amount", 0))))
+        if float(v.get("yaw", 0.0)) % 360.0:
+            # turned: the game's quad prism (shape 2: 4 x / z corners as ints, f32 bottom, height, 0; DX11
+            # FUN_0086d090), corners in the stock maps' order
+            cs = corners(v)
+            out += struct.pack("<II8i3f3I", VOLUME_PRIORITY, SHAPE_QUAD, *[int(round(c)) for xz in cs for c in xz],
+                               lo[1], hi[1] - lo[1], 0.0, 1, amount, w[2]) + tail
+        else:
+            out += struct.pack("<II6f3I", VOLUME_PRIORITY, SHAPE_BOX, *hi, *lo, 1, amount, w[2]) + tail
     struct.pack_into("<I", out, 8, first + len(vols))
-    # cells: the grid over the header's x / z bounds, cell = zi * 32 + xi; each lists extra zones to test
+    # cells: the grid over the header's x / z bounds, cell = zi * 32 + xi; each lists the zones to test, 16 entries
+    # ending at -1, and the game takes the first one holding the point (DX11 FUN_0086dac0): limiters go first, the
+    # smallest first (a shack inside a bigger limiter wins); a full list loses its last stock entries
     mx, mn = sb["max"], sb["min"]
     span_x, span_z = (mx[0] - mn[0]) or 1.0, (mx[2] - mn[2]) or 1.0
     cell = lambda v, a, s: max(0, min(31, int((v - a) / s * 32)))
     full = 0
-    for i, v in enumerate(vols):
-        (x, _y, z), (sx, _sy, sz) = v["pos"], v["size"]
-        for zi in range(cell(z - abs(sz) / 2, mn[2], span_z), cell(z + abs(sz) / 2, mn[2], span_z) + 1):
-            for xi in range(cell(x - abs(sx) / 2, mn[0], span_x), cell(x + abs(sx) / 2, mn[0], span_x) + 1):
-                at = 0x24 + 64 * (zi * 32 + xi) + 8
-                lst = list(struct.unpack_from("<14i", out, at))
-                if -1 in lst:
-                    lst[lst.index(-1)] = first + i
-                    struct.pack_into("<14i", out, at, *lst)
-                else:
+    for i in sorted(range(len(vols)), key=lambda i: -abs(vols[i]["size"][0] * vols[i]["size"][1] * vols[i]["size"][2])):
+        cs = corners(vols[i])
+        x0, x1, z0, z1 = min(c[0] for c in cs), max(c[0] for c in cs), min(c[1] for c in cs), max(c[1] for c in cs)
+        for zi in range(cell(z0, mn[2], span_z), cell(z1, mn[2], span_z) + 1):
+            for xi in range(cell(x0, mn[0], span_x), cell(x1, mn[0], span_x) + 1):
+                at = 0x24 + 64 * (zi * 32 + xi)
+                lst = [e for e in struct.unpack_from("<16i", out, at) if e != -1]
+                if len(lst) >= 16:
                     full += 1
+                lst = ([first + i] + lst)[:16]   # biggest inserted first, so the smallest ends up in front
+                struct.pack_into("<16i", out, at, *(lst + [-1] * (16 - len(lst))))
     lp2scenebox.parse(bytes(out))   # still a valid file
     return bytes(out), len(vols), full
 

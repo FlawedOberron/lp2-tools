@@ -15,8 +15,11 @@ Model: header 0x80 (counts, offsets, bsphere 0x40, bbox 0x50/0x60, (1000, 3000, 
 groups 32 B (u32 id, 12 pad, sphere) = one per mesh, textures 64 B, materials 160 B, meshes 48 B,
 u32 count + 144 B box per mesh (u32 255, 12 pad, sphere, min, max, 4x4 frame, half extents),
 vertex buffer, u16 triangle lists (absolute within a 64K window; the window moves by mesh +0x10).
+Converted textures and decoded lightmaps are cached by their source file's hash (cache_dir(); they never
+change between rebuilds) and made on all cores.
 """
-import argparse, os, struct, sys
+import argparse, hashlib, os, struct, sys
+from concurrent.futures import ProcessPoolExecutor
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -34,6 +37,81 @@ def u8n(v):
     v = np.asarray(v, float)
     l = np.linalg.norm(v) or 1.0
     return bytes(int(round(x / l * 127 + 127)) for x in v) + b"\xff"
+
+
+def unpack1010_n(w):
+    """unpack1010 for an array of words -> (n, 3)"""
+    w = np.asarray(w, np.int64)
+    return np.stack([((((w >> s) & 0x3FF) ^ 0x200) - 0x200) / 511.0 for s in (0, 10, 20)], 1)
+
+
+def u8n_n(v):
+    """u8n for (n, 3) vectors -> (n, 4) uint8"""
+    l = np.linalg.norm(v, axis=1)
+    l[l == 0] = 1.0
+    out = np.full((len(v), 4), 0xFF, np.uint8)
+    out[:, :3] = np.round(v / l[:, None] * 127 + 127).astype(np.int64)
+    return out
+
+
+TEX_VERSION = b"lp2tex 1"   # bump when lp2tex's encoder or tex_rgba changes: old cache entries then miss
+
+
+def cache_dir():
+    base = os.environ.get("LOCALAPPDATA") or os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
+    return os.path.join(base, "lp2-tools", "stage-tex")
+
+
+def _key(path, *extra):
+    h = hashlib.sha1(TEX_VERSION)
+    for x in extra:
+        h.update(str(x).encode() + b"\0")
+    h.update(open(path, "rb").read())
+    return h.hexdigest()
+
+
+def _cache_put(path, data):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = f"{path}.{os.getpid()}.tmp"
+    open(tmp, "wb").write(data)
+    os.replace(tmp, path)   # whole files only (several processes, several runs)
+
+
+def texture_job(job):
+    """(src LP1 texture or None, kind, destination) -> writes the rTexture; True when it came from the cache"""
+    src, kind, dst = job
+    if src is None:  # flat stand-ins
+        img = np.zeros((4, 4, 4), np.uint8)
+        img[...] = (128, 128, 255, 255) if kind == "nm" else (0, 0, 0, 255)
+        open(dst, "wb").write(lp2tex.encode(img, kind))
+        return False
+    cached = os.path.join(cache_dir(), _key(src, kind) + ".rTexture")
+    if os.path.exists(cached):
+        open(dst, "wb").write(open(cached, "rb").read())
+        return True
+    img = pot(tex_rgba(src))
+    if kind == "bm" and img[..., 3].max() < 8:
+        # alpha zero everywhere is not transparency (LP1 keeps a mask there, e.g. most of s900's
+        # colour maps): opaque, so DXT1 and nothing for the game to cut away
+        img = img.copy()
+        img[..., 3] = 255
+    data = lp2tex.encode(img, kind)
+    open(dst, "wb").write(data)
+    _cache_put(cached, data)
+    return False
+
+
+def lightmap_job(src):
+    """LP1 lightmap -> float32 RGBA array (cached as uint8 .npy, what tex_rgba decodes)"""
+    cached = os.path.join(cache_dir(), _key(src, "lm") + ".npy")
+    if os.path.exists(cached):
+        return np.load(cached).astype(np.float32)
+    lm = tex_rgba(src)
+    tmp = f"{cached}.{os.getpid()}.npy"
+    os.makedirs(os.path.dirname(cached), exist_ok=True)
+    np.save(tmp, lm)
+    os.replace(tmp, cached)
+    return lm.astype(np.float32)
 
 
 def tex_rgba(path):
@@ -138,18 +216,41 @@ def write_stage(dst, textures, materials, meshes):
 
 def balance(meshes, amount):
     """per-channel gains on the baked light (vertex +24) so its average colour is grey, by amount (0..1)"""
-    cols = np.array([list(v[24:27]) for m in meshes for v in m["verts"]], np.float64)
-    if not len(cols):
+    if not any(len(m["verts"]) for m in meshes):
         return
+    cols = np.concatenate([m["verts"][:, 24:27] for m in meshes]).astype(np.float64)
     mean = cols.mean(0)
     gain = 1 + amount * (mean.mean() / np.maximum(mean, 1) - 1)
     for m in meshes:
-        out = []
-        for v in m["verts"]:
-            c = bytes(int(min(255, round(x * g))) for x, g in zip(v[24:27], gain))
-            out.append(v[:24] + c + v[27:])
-        m["verts"] = out
+        v = m["verts"].copy()
+        v[:, 24:27] = np.minimum(255, np.round(v[:, 24:27] * gain)).astype(np.uint8)
+        m["verts"] = v
     print(f"baked light balanced: average {mean.round(1).tolist()} -> gains {gain.round(3).tolist()}")
+
+
+def write_empties(out_dir, textures, materials, names):
+    """stub stage models (scene slots the map must fill): the stage's layout, one 1 mm triangle far below the map,
+    its first material"""
+    for name in names:
+        v = [struct.pack("<3f", x, -100000.0, z) + b"\x7f\xff\x7f\xff" * 2 + struct.pack("<2e", 0, 0) + b"\0\0\0\xff"
+             for x, z in ((0, 0), (0.1, 0), (0, 0.1))]
+        m = dict(lo=np.array([0, -100000.0, 0]), hi=np.array([0.1, -100000.0, 0.1]))
+        g = struct.pack("<I12x4f", 1, 0.05, -100000.0, 0.05, 0.1)
+        mesh = struct.pack("<HHIBBBBIIIIIIBBHHHI", 0xFDF7, 3, 1 | 0xFF << 24, 1, 0, STRIDE, 3, 0, 0, FMT, 0, 3, 0, 1, 0, 1, 0, 2, 0)
+        c, h = (m["lo"] + m["hi"]) / 2, (m["hi"] - m["lo"]) / 2
+        box = struct.pack("<I", 1) + struct.pack("<I12x4f4f4f16f4f", 255, *c, 0.1, *m["lo"], 0.0, *m["hi"], 0.0,
+                                                 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, *c, 1.0, *h, 0.0)
+        tb1 = struct.pack("<64s", textures[0].encode()) + struct.pack("<64s", textures[1].encode())
+        e_tex = 0x80 + 32
+        e_mesh = e_tex + len(tb1) + 160
+        e_vb = e_mesh + 48 + len(box)
+        e_ib = e_vb + 3 * STRIDE
+        hd = struct.pack("<4sHHHH13I", b"MOD\0", 0xC5, 0, 1, 1, 3, 3, 1, 3 * STRIDE, 2, 1, 0, 0x80, e_tex, e_mesh, e_vb, e_ib, 0)
+        hd += struct.pack("<4f4f4f4I", *c, 0.1, *m["lo"], 0.0, *m["hi"], 0.0, 1000, 3000, 1, 0)
+        mat = bytearray(materials[0])
+        struct.pack_into("<3I", mat, 12, 2, 2, 2)
+        open(os.path.join(out_dir, name + ".rModel"), "wb").write(hd + g + tb1 + bytes(mat) + mesh + box + b"".join(v) + struct.pack("<3H", 0, 1, 2))
+        print(f"wrote stand-in {name}.rModel")
 
 
 def main():
@@ -180,34 +281,39 @@ def main():
     textures = [cm_name]  # LP2 texture list (1-based in materials)
     tex_index, converted = {cm_name: 1}, {}
 
+    tex_jobs = []   # (src, kind, destination): made after the meshes, on all cores
+
     def add_tex(src_path, name, kind):
         full = a.tex_dir + "\\" + name
         if full not in tex_index:
-            if src_path is None:  # flat stand-ins
-                img = np.zeros((4, 4, 4), np.uint8)
-                img[...] = (128, 128, 255, 255) if kind == "nm" else (0, 0, 0, 255)
-            else:
-                img = pot(tex_rgba(src_path))
-                if kind == "bm" and img[..., 3].max() < 8:
-                    # alpha zero everywhere is not transparency (LP1 keeps a mask there, e.g. most of s900's
-                    # colour maps): opaque, so DXT1 and nothing for the game to cut away
-                    img = img.copy()
-                    img[..., 3] = 255
-            open(os.path.join(out_dir, name + ".rTexture"), "wb").write(lp2tex.encode(img, kind))
+            tex_jobs.append((src_path, kind, os.path.join(out_dir, name + ".rTexture")))
             textures.append(full)
             tex_index[full] = len(textures)
         return tex_index[full]
 
-    materials, mat_key = [], {}
-    meshes = []  # dict(mat, verts bytes list, tris)
-    lm_cache = {}
+    # the lightmaps first (the vertex colours need them), decoded on all cores
+    models = []
+    lm_paths = set()
     for path in a.models:
         b = open(path, "rb").read()
         M = lp1model.read_model(b)
         E = M["e"]
-        tex_off = struct.unpack_from(E + "I", b, 0x34)[0]
-        mo = tex_off + len(M["texs"]) * 64
+        mo = struct.unpack_from(E + "I", b, 0x34)[0] + len(M["texs"]) * 64
         texp = [lp1model.find_tex(path, t) for t in M["texs"]]
+        models.append((path, b, M, mo, texp))
+        for m in M["meshes"]:
+            w9 = struct.unpack_from(E + "I", b, mo + m["mat"] * 160 + 9 * 4)[0]
+            if m["lodmask"] & 1 and 0 < w9 <= len(texp) and texp[w9 - 1]:
+                lm_paths.add(texp[w9 - 1])
+    pool = ProcessPoolExecutor(max_workers=os.cpu_count() or 4)
+    lm_cache = dict(zip(sorted(lm_paths), pool.map(lightmap_job, sorted(lm_paths))))
+
+    materials, mat_key = [], {}
+    meshes = []  # dict(mat, verts (n, 28) uint8, tris)
+    for path, b, M, mo, texp in models:
+        E = M["e"]
+        vdt = np.dtype({"names": ["pos", "n", "tg", "uv", "lm"], "formats": [E + "3f4", E + "u4", E + "u4", E + "2f2", E + "2f2"],
+                        "offsets": [0, 12, 16, 20, 28], "itemsize": 32})
         for mi, m in enumerate(M["meshes"]):
             print(f"@progress {(mi + 1) / len(M['meshes']):.3f} {os.path.basename(path).split('.')[0]}: meshes and lightmaps", flush=True)
             w = struct.unpack_from(E + "40I", b, mo + m["mat"] * 160)
@@ -225,61 +331,40 @@ def main():
                 struct.pack_into("<I", mat, 36, 1)
                 materials.append(bytes(mat))
                 mat_key[key] = len(materials) - 1
-            lm = None
-            if slot(9) is not None:
-                p = texp[slot(9)]
-                if p not in lm_cache:
-                    lm_cache[p] = tex_rgba(p).astype(np.float32)
-                lm = lm_cache[p]
-            tris = lp1model.mesh_geometry(b, M, m)
-            used = sorted({i for t in tris for i in t})
-            remap = {v: n for n, v in enumerate(used)}
-            vbytes = []
-            for i in used:
-                o = M["vb"] + m["voff"] + i * 32
-                pos = struct.unpack_from(E + "3f", b, o)
-                n = unpack1010(struct.unpack_from(E + "I", b, o + 12)[0])
-                tg = unpack1010(struct.unpack_from(E + "I", b, o + 16)[0])
-                uv = struct.unpack_from(E + "2e", b, o + 20)
-                lu, lv = struct.unpack_from(E + "2e", b, o + 28)
-                if lm is not None and np.isfinite(lu) and np.isfinite(lv):
-                    h, wd = lm.shape[:2]
-                    px = lm[min(h - 1, max(0, int(lv * h))), min(wd - 1, max(0, int(lu * wd)))]  # clamp, no wrap
-                    col = bytes(int(min(255, x * a.light)) for x in px[:3]) + b"\xff"
-                else:
-                    col = b"\x80\x80\x80\xff"
-                vbytes.append(struct.pack("<3f", *pos) + u8n(n) + u8n(tg) + struct.pack("<2e", *uv) + col)
-            pts = np.array([struct.unpack_from("<3f", v) for v in vbytes])
-            meshes.append(dict(mat=mat_key[key], verts=vbytes, tris=[tuple(remap[i] for i in t) for t in tris],
-                               lo=pts.min(0), hi=pts.max(0)))
+            lm = lm_cache[texp[slot(9)]] if slot(9) is not None else None
+            tris = np.asarray(lp1model.mesh_geometry(b, M, m), np.int64).reshape(-1, 3)
+            used = np.unique(tris)
+            if not len(used):
+                continue
+            src = np.frombuffer(b, vdt, count=int(used.max()) + 1, offset=M["vb"] + m["voff"])[used]
+            v = np.zeros((len(used), STRIDE), np.uint8)
+            pos = src["pos"].astype("<f4")
+            v[:, 0:12] = pos.view(np.uint8).reshape(-1, 12)
+            v[:, 12:16] = u8n_n(unpack1010_n(src["n"]))
+            v[:, 16:20] = u8n_n(unpack1010_n(src["tg"]))
+            v[:, 20:24] = src["uv"].astype("<f2").view(np.uint8).reshape(-1, 4)
+            v[:, 24:28] = (0x80, 0x80, 0x80, 0xFF)
+            if lm is not None:
+                lu, lv = src["lm"][:, 0].astype(np.float64), src["lm"][:, 1].astype(np.float64)
+                ok = np.isfinite(lu) & np.isfinite(lv)
+                h, wd = lm.shape[:2]
+                y = np.clip((lv[ok] * h).astype(np.int64), 0, h - 1)   # clamp, no wrap (int() truncates like this)
+                x = np.clip((lu[ok] * wd).astype(np.int64), 0, wd - 1)
+                v[ok, 24:27] = np.minimum(255, lm[y, x, :3] * np.float32(a.light)).astype(np.uint8)
+            meshes.append(dict(mat=mat_key[key], verts=v, tris=np.searchsorted(used, tris),
+                               lo=pos.min(0).astype(np.float64), hi=pos.max(0).astype(np.float64)))
         print(f"{os.path.basename(path)}: {len(meshes)} meshes so far, {len(textures)} textures")
 
+    cached = sum(pool.map(texture_job, tex_jobs))
+    pool.shutdown()
+    print(f"{len(tex_jobs)} textures ({cached} from the cache, {cache_dir()})")
     if a.balance > 0:
         balance(meshes, a.balance)
     dst = os.path.join(out_dir, model_name + ".rModel")
     data = write_stage(dst, textures, materials, meshes)
     total = sum(len(m["verts"]) for m in meshes)
     ntri = sum(len(m["tris"]) for m in meshes)
-    for name in a.empty:  # same layout, one 1 mm triangle far below the map, first material
-        v = [struct.pack("<3f", x, -100000.0, z) + b"\x7f\xff\x7f\xff" * 2 + struct.pack("<2e", 0, 0) + b"\0\0\0\xff"
-             for x, z in ((0, 0), (0.1, 0), (0, 0.1))]
-        m = dict(lo=np.array([0, -100000.0, 0]), hi=np.array([0.1, -100000.0, 0.1]))
-        g = struct.pack("<I12x4f", 1, 0.05, -100000.0, 0.05, 0.1)
-        mesh = struct.pack("<HHIBBBBIIIIIIBBHHHI", 0xFDF7, 3, 1 | 0xFF << 24, 1, 0, STRIDE, 3, 0, 0, FMT, 0, 3, 0, 1, 0, 1, 0, 2, 0)
-        c, h = (m["lo"] + m["hi"]) / 2, (m["hi"] - m["lo"]) / 2
-        box = struct.pack("<I", 1) + struct.pack("<I12x4f4f4f16f4f", 255, *c, 0.1, *m["lo"], 0.0, *m["hi"], 0.0,
-                                                 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, *c, 1.0, *h, 0.0)
-        tb1 = struct.pack("<64s", textures[0].encode()) + struct.pack("<64s", textures[1].encode())
-        e_tex = 0x80 + 32
-        e_mesh = e_tex + len(tb1) + 160
-        e_vb = e_mesh + 48 + len(box)
-        e_ib = e_vb + 3 * STRIDE
-        hd = struct.pack("<4sHHHH13I", b"MOD\0", 0xC5, 0, 1, 1, 3, 3, 1, 3 * STRIDE, 2, 1, 0, 0x80, e_tex, e_mesh, e_vb, e_ib, 0)
-        hd += struct.pack("<4f4f4f4I", *c, 0.1, *m["lo"], 0.0, *m["hi"], 0.0, 1000, 3000, 1, 0)
-        mat = bytearray(materials[0])
-        struct.pack_into("<3I", mat, 12, 2, 2, 2)
-        open(os.path.join(out_dir, name + ".rModel"), "wb").write(hd + g + tb1 + bytes(mat) + mesh + box + b"".join(v) + struct.pack("<3H", 0, 1, 2))
-        print(f"wrote stand-in {name}.rModel")
+    write_empties(out_dir, textures, materials, a.empty)
     print(f"wrote {dst}: {len(meshes)} meshes, {len(materials)} materials, {len(textures)} textures, {total} vertices, "
           f"{ntri} triangles, {len(data) / 1e6:.1f} MB")
 

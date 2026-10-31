@@ -177,3 +177,16 @@ Generated 2026-10-19 from game data (no names: both games keep VS names in messa
 - Seat: not a joint lookup we found (no other VS-class call with 100-200 constants); likely vs06's / vs32's ride
   motion + class params, so the pilot sits where the vs06 / vs32 seat is. If still off: shift the model to fit.
 - vs66 transform: needs LP1's own vs66 motions (sled form) or disabling the vs06 transform; not done.
+
+## vs40 (LP1 boss GTF-11) -> usable VS, 2026-10-28 (UNTESTED)
+- LP2 ships uVs40.arc = the LP1 vs40 model unchanged + its own vs40_mot, no SE bank, no Havok constraint, om8214.
+  uVs40's 28 overrides never touch a sound bank (VS_3200 paths are hard-coded in uVs32's functions), so adding the
+  bank to uVs40.arc would do nothing. Never placed in a stock rObjSet.
+- vs40's skeleton = vs82's (LP1 GTF-11) joint for joint, minus vs82's front points 100 / 101 (on j11 at
+  (+-40.4, 37.8, 111)). uVs82 is a uVs32 subclass (5 overrides): GTF-11 ride, motions (vs32_mot), sounds.
+- Port: lp2vsjoints.py --preset vs40 (37=100 38=101 +151/+150 at vs82's offsets +200@11; offset joints:
+  inverse bind = parent's x inverse(local), verified on vs82), model swapped into uVs82.arc as vs82\vs82 + the vs40
+  textures (arcput --add). Mod: Mods\gtf11_boss\...\uVs82.arc (lp2-assets/mods/gtf11_boss); lp1_vs_fix's
+  uVs82.arc removed (LP1 vs82 now maps to 0x2b). So 0x82 = the boss GTF-11 for players with the mod.
+- Test map: Maps\BattlegroundsBoss.zip (tag lp1bgbos; layout variant 03 has 4 x 0x82).
+- Built into the model: leg rocket launchers + the left-hand laser -> new VS weapon types (roadmap).

@@ -56,7 +56,7 @@ def read_obj(path):
     folder = os.path.dirname(path)
     V, C, VT, VN = [], [], [], []
     faces = {}   # material -> [corner triples]
-    cur = ""
+    cur, obj = "", ""
     mtls = []
     for line in open(path, encoding="utf-8", errors="replace"):
         w = line.split()
@@ -69,6 +69,8 @@ def read_obj(path):
             VT.append([float(w[1]), float(w[2]) if len(w) > 2 else 0.0])
         elif w[0] == "vn":
             VN.append([float(x) for x in w[1:4]])
+        elif w[0] in ("o", "g"):
+            obj = " ".join(w[1:])
         elif w[0] == "usemtl":
             cur = " ".join(w[1:])
         elif w[0] == "mtllib":
@@ -81,13 +83,13 @@ def read_obj(path):
                 cs.append(tuple(i - 1 if i > 0 else (len(L) + i if i < 0 else -1)
                                 for i, L in zip(idx, (V, VT, VN))))
             for i in range(1, len(cs) - 1):   # fan
-                faces.setdefault(cur, []).append((cs[0], cs[i], cs[i + 1]))
+                faces.setdefault((obj, cur), []).append((cs[0], cs[i], cs[i + 1]))
     V = np.array(V, np.float64)
     has_c = any(c is not None for c in C)
     Cv = np.array([c if c is not None else [1.0, 1.0, 1.0] for c in C], np.float64) if has_c else None
     VT, VN = np.array(VT, np.float64).reshape(-1, 2), np.array(VN, np.float64).reshape(-1, 3)
     parts = []
-    for mat, fs in faces.items():
+    for (obj, mat), fs in faces.items():
         keys, T = {}, []
         for f in fs:
             tri = []
@@ -105,7 +107,7 @@ def read_obj(path):
             U = VT[ti].copy()
             U[:, 1] = 1.0 - U[:, 1]   # OBJ V is up from the bottom; LP2's (and glTF's) down from the top
         N = VN[ni] if len(VN) and (ni >= 0).all() else None
-        parts.append(dict(mat=mat, P=V[vi], N=N, U=U, C=Cv[vi] if Cv is not None else None, T=np.array(T, np.int64)))
+        parts.append(dict(obj=obj, mat=mat, P=V[vi], N=N, U=U, C=Cv[vi] if Cv is not None else None, T=np.array(T, np.int64)))
     mats = {}
     for m in mtls:
         mp = os.path.join(folder, m)
@@ -245,7 +247,7 @@ def read_gltf(path):
                 U = accessor(at["TEXCOORD_0"]) if "TEXCOORD_0" in at else None
                 C = accessor(at["COLOR_0"])[:, :3] if "COLOR_0" in at else None
                 mi = pr.get("material")
-                parts.append(dict(mat=names[mi] if mi is not None else "", P=P, N=N, U=U, C=C, T=T))
+                parts.append(dict(obj=n.get("name", ""), mat=names[mi] if mi is not None else "", P=P, N=N, U=U, C=C, T=T))
         for c in n.get("children", []):
             walk(c, M)
 
@@ -253,6 +255,15 @@ def read_gltf(path):
     for i in scene.get("nodes", []):
         walk(i, np.eye(4))
     return parts, mats
+
+
+def obj_key(obj):
+    """Blender's object name, without the .001 a duplicate gets"""
+    return re.sub(r"\.\d{3}$", "", obj).lower()
+
+
+def is_col(obj):
+    return obj[:4].upper() == "COL_"
 
 
 def read_mesh(path):
@@ -435,8 +446,12 @@ def build_import(game, project, name, log=print):
     progress(0.05, "reading " + cfg["source"])
     parts, fmats = read_mesh(os.path.join(d, "source", cfg["source"]))
     parts = [p for p in parts if len(p["T"])]
+    # Blender objects named COL_<name>: collision only (for <name>, which then isn't collision itself)
+    cols = [p for p in parts if is_col(p.get("obj", ""))]
+    parts = [p for p in parts if not is_col(p.get("obj", ""))]
+    covered = {obj_key(p["obj"][4:]) for p in cols}
     if not parts:
-        raise SystemExit(f"{cfg['source']}: no triangles")
+        raise SystemExit(f"{cfg['source']}: no triangles" + (" (only COL_ collision objects)" if cols else ""))
     scale = float(cfg.get("scale", 100.0))
     slots = cfg.setdefault("slots", {})
     for p in parts:
@@ -451,7 +466,7 @@ def build_import(game, project, name, log=print):
     mat_tpl, cm_name, tb = lp2props.stage_template(game)
     open(os.path.join(prev, "online00.rModel"), "wb").write(tb)
     textures, materials, mat_index, tex_files = [cm_name], [], {}, {}
-    meshes, cverts, ctris = [], [], []
+    meshes, cverts, ctris, vis = [], [], [], []
     for k, p in enumerate(parts):
         progress(0.1 + 0.6 * k / len(parts), "material " + slots[p["mat"]])
         mname = slots[p["mat"]]
@@ -486,8 +501,10 @@ def build_import(game, project, name, log=print):
         if C is not None:
             v[:, 24:27] = np.clip(v[:, 24:27] * np.clip(C, 0, 1), 0, 255).astype(np.uint8)
         meshes.append(dict(mat=mat_index[mname], verts=v, tris=T))
-        ctris.append(T + len(cverts))
-        cverts.extend(P.tolist())
+        if obj_key(p.get("obj", "")) not in covered:
+            ctris.append(T + len(cverts))
+            cverts.extend(P.tolist())
+        vis.append(P)
     by_mat = {}
     for m in meshes:
         by_mat.setdefault(m["mat"], []).append(m)
@@ -499,11 +516,15 @@ def build_import(game, project, name, log=print):
     model = os.path.join(out_dir, "online00.rModel")
     from lp2stage import write_stage
     write_stage(model, textures, materials, meshes)
-    V = np.array(cverts)
-    lo, hi = V.min(0), V.max(0)
+    for p in cols:
+        ctris.append(p["T"] + len(cverts))
+        cverts.extend((p["P"] * scale).tolist())
+    V = np.array(cverts).reshape(-1, 3)
+    allv = np.concatenate(vis)
+    lo, hi = allv.min(0), allv.max(0)
     coll = cfg.get("collision", "mesh")
     col_rel = None
-    if coll != "none":
+    if coll != "none" and (coll == "box" or ctris):
         if coll == "box":
             CV, CT = box_tris(lo, hi)
         else:
@@ -537,7 +558,7 @@ def build_import(game, project, name, log=print):
     json.dump({k: v for k, v in cfg.items() if k != "name"}, open(os.path.join(d, "import.json"), "w"), indent=1)
     progress(1.0, "done")
     log(f"{name}: {cfg['triangles']} triangles, {len(materials)} materials ({', '.join(mat_index)}), "
-        f"collision {coll}, {cfg['size'][0]} x {cfg['size'][1]} x {cfg['size'][2]} m")
+        f"collision {coll}{' (%d COL_ objects)' % len(cols) if cols and coll == 'mesh' else ''}, {cfg['size'][0]} x {cfg['size'][1]} x {cfg['size'][2]} m")
     return cfg
 
 

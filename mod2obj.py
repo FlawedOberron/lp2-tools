@@ -5,6 +5,8 @@
   mod2obj.py -r DIR                    every *.rModel under DIR, .obj written alongside
   mod2obj.py IN.rModel OUT.obj --pose MOTIONS.rMotionList[:N]   skinned meshes in motion N's first frame
   mod2obj.py IN.rModel OUT.obj --one-copy   only the first of a model's copies (VS weapons hold one per mount)
+  mod2obj.py IN.rModel OUT.obj --variant 00 only variant 00's meshes where the model holds several (the loadout
+                                             weapon slots: colour map names ..._BM-NN[_x]), plus the shared ones
 
 Header: 0x04 u16 version, 0x06 u16 bones, 0x08 u16 meshes, 0x0A u16 materials,
   0x0C vertex count, 0x10 index count, 0x18 vertex buffer size, 0x1C texture count,
@@ -18,7 +20,7 @@ Mesh: +2 u16 vcount, +4 u32 (bits 0-11 part group, 12-23 material, 24-31 LOD mas
   Vertex for index i is at vb + offset + (base + i)*stride.
 Vertex layouts were inferred per format hash; unknown formats export positions only.
 """
-import os, struct, sys
+import os, re, struct, sys
 
 # format hash -> (position encoding, uv offset or None)
 #   'f32'  : 3 x float32 at 0
@@ -191,9 +193,9 @@ def first_tree(b, M):
     return keep
 
 
-def export(src, dst, motions=None, motion=0, one_copy=False):
+def export(src, dst, motions=None, motion=0, one_copy=False, variant=None):
     """motions: an rMotionList's bytes: skinned meshes take that motion's first frame (lp2pose), else the bind pose.
-    one_copy: only the first copy of a model built as several (first_tree)."""
+    one_copy: only the first copy of a model built as several (first_tree). variant: "00" etc., see the usage."""
     b = open(src, "rb").read()
     M = read_model(b)
     mats = None
@@ -209,6 +211,11 @@ def export(src, dst, motions=None, motion=0, one_copy=False):
     for k, m in enumerate(M["meshes"]):
         if keep is not None and not keep.get(k, True):
             continue
+        if variant is not None:
+            slot = M["mats"][m["mat"]][0] if m["mat"] < len(M["mats"]) else 0
+            tv = re.search(r"_bm-(\d\d)", M["texs"][slot - 1].lower()) if 0 < slot <= len(M["texs"]) else None
+            if not tv and not 0 < slot <= len(M["texs"]) or (tv and tv.group(1) != variant) or not m["lodmask"] & 1:
+                continue   # untextured: effects (a dummy grenade's decoy, a shield's deployed field)
         g = mesh_geometry(b, m, M)
         if g is None:
             skipped += 1
@@ -327,7 +334,10 @@ def main():
             del a[k:k + 2]
         one = "--one-copy" in a
         a = [x for x in a if x != "--one-copy"]
-        M, skipped = export(a[0], a[1] if len(a) > 1 else os.path.splitext(a[0])[0] + ".obj", *(pose or (None, 0)), one_copy=one)
+        var = None
+        if "--variant" in a:
+            i = a.index("--variant"); var = a[i + 1]; del a[i:i + 2]
+        M, skipped = export(a[0], a[1] if len(a) > 1 else os.path.splitext(a[0])[0] + ".obj", *(pose or (None, 0)), one_copy=one, variant=var)
         print(f"bones {M['bones']} meshes {len(M['meshes'])} materials {len(M['mats'])} skipped {skipped}")
 
 

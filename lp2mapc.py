@@ -18,15 +18,18 @@ The package is the base stock map (project base.stock, 0 = Desecration) with eve
                            planes, falling ash), placed field effects, per-zone fog / weather / env textures (plain
                            defaults, or the project's environment.fog), radar images (blank), environment cube (grey)
   water planes             the stock map's (effect models, its own spots) stubbed; water is a project setting
+  sound zones              reverb presets + zones from the project's sound volumes (lp2sound.py; the game's own
+                           files, no xlive mod)
   resource paths           arcsub.py 'scr\\Online\\online00\\' -> 'scr\\Online\\<tag>\\' so the game's
                            path-keyed cache never mixes it up with the stock map or another package
 Every file comes from the user's own game install and the project's assets.
 """
-import argparse, json, math, os, shutil, struct, subprocess, sys, tempfile, zipfile, zlib
+import argparse, hashlib, json, math, os, shutil, struct, subprocess, sys, tempfile, zipfile, zlib
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import arcx, lp2clean, lp2col, lp2pieces, lp2project, lp2scenebox, lp2stage, lp2weather, mapslot, sbc  # noqa: E402
+import arcx, lp2bake, lp2clean, lp2col, lp2pieces, lp2project, lp2scenebox, lp2stage, lp2weather, mapslot, sbc  # noqa: E402
+import lp2sound  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ARCS = {"main": "arcXmlTmpPC/aArea_ONLINE_00.arc", "v": "arcXmlTmpPC/variable/aArea_ONLINE_00_v.arc",
@@ -93,6 +96,138 @@ def stock_package(game, pkg, stock):
         out = os.path.join(pkg, "nativePC", *n.split("\\")) + "." + ext
         os.makedirs(os.path.dirname(out), exist_ok=True)
         open(out, "wb").write(data)
+
+
+def copy_lp2_stage(src, dst):
+    """an LP2 map's converted stage (online00.rModel + textures, lp2stockmaps.py) as lp2stage.py's output: + the stubs"""
+    shutil.copytree(src, dst)
+    d = os.path.join(dst, *STAGE_DIR.split("\\"))
+    S = lp2pieces.read_stage(os.path.join(d, "online00.rModel"))
+    lp2stage.write_empties(d, S["textures"], S["materials"], STUBS)
+
+
+def volume_local(v):
+    """a project volume {"pos": centre of its floor (cm), "size": [x, y, z] (cm), "yaw": degrees about y} -> min, max
+    of the box before its yaw (it turns about its centre; map.json volumes carry "yaw" beside them)"""
+    (x, y, z), (sx, sy, sz) = v["pos"], v.get("size", [1000, 1000, 1000])
+    return [x - sx / 2, y, z - sz / 2], [x + sx / 2, y + sy, z + sz / 2]
+
+
+def volume_parts(v):
+    """a volume's boxes as separate volumes with its effects: the main one, then each of "boxes" ({"pos": floor centre
+    relative to the volume's pos in its turned frame, "size"}) turned and placed in the map"""
+    main = {k: x for k, x in v.items() if k != "boxes"}
+    out = [main]
+    a = math.radians(volume_yaw(v))
+    c, s = math.cos(a), math.sin(a)
+    x, y, z = v["pos"]
+    for b in v.get("boxes", []):
+        lx, ly, lz = b["pos"]
+        out.append(dict(main, pos=[x + lx * c + lz * s, y + ly, z - lx * s + lz * c], size=list(b["size"])))
+    return out
+
+
+def all_parts(p):
+    return [q for v in p.get("volumes", []) for q in volume_parts(v)]
+
+
+def volume_yaw(v):
+    return float(v.get("yaw", 0.0)) % 360.0
+
+
+def volume_corners(v):
+    """the box's 4 x / z corners, turned by its yaw (the editor's: Godot's rotation about y, game axes)"""
+    (x, _y, z), (sx, _sy, sz) = v["pos"], v.get("size", [1000, 1000, 1000])
+    a = math.radians(volume_yaw(v))
+    c, s = math.cos(a), math.sin(a)
+    return [(x + lx * c + lz * s, z - lx * s + lz * c)
+            for lx, lz in ((-sx / 2, -sz / 2), (sx / 2, -sz / 2), (sx / 2, sz / 2), (-sx / 2, sz / 2))]
+
+
+def volume_box(v):
+    """the volume's world-axis bounds (its corners after the yaw) -> min, max"""
+    lo, hi = volume_local(v)
+    cs = volume_corners(v)
+    return ([min(c[0] for c in cs), lo[1], min(c[1] for c in cs)],
+            [max(c[0] for c in cs), hi[1], max(c[1] for c in cs)])
+
+
+def volume_kill(v):
+    """a volume's effects combine: "kill": true, "gravity": x, "post": {...} (older projects: "type")"""
+    return bool(v.get("kill")) or v.get("type") == "kill"
+
+
+def volume_gravity(v):
+    return float(v["gravity"]) if "gravity" in v and v.get("type") != "kill" else None
+
+
+def cache_dir(kind):
+    base = os.environ.get("LOCALAPPDATA") or os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
+    return os.path.join(base, "lp2-tools", kind)
+
+
+def collision_key(src, tmpl, models, geo, kill, kills, library):
+    """a cache key for one built rCollision: its inputs' bytes, the settings and the collision code"""
+    h = hashlib.sha1()
+    for f in [src, tmpl, *models] + [os.path.join(HERE, m) for m in ("lp2col.py", "lp2pieces.py", "lp2stage.py")]:
+        h.update(open(f, "rb").read())
+        h.update(b"\0")
+    h.update(json.dumps([geo, kill, kills, str(library)], sort_keys=True, default=str).encode())
+    return h.hexdigest()
+
+
+def cache_put(path, src):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = f"{path}.{os.getpid()}.tmp"
+    shutil.copyfile(src, tmp)
+    os.replace(tmp, path)
+
+
+def no_weather_volumes(p):
+    """weather limiter volumes ("weather": % of the map's weather inside; older "no_weather": true = 0) join
+    environment.weather.volumes (lp2weather's boxes: "pos" the centre, cm, "amount" %)"""
+    vs = [v for v in all_parts(p) if "weather" in v or v.get("no_weather")]
+    w = p.get("environment", {}).get("weather")
+    if vs and isinstance(w, dict):
+        w["volumes"] = list(w.get("volumes") or []) + [
+            dict(pos=[v["pos"][0], v["pos"][1] + v["size"][1] / 2, v["pos"][2]], size=list(v["size"]),
+                 yaw=volume_yaw(v), amount=max(0.0, min(100.0, float(v.get("weather", 0.0))))) for v in vs]
+
+
+def gravity_manifest(p):
+    """map.json gravity and screen settings for the xlive mod (gravity.cpp, post.cpp): environment jump_packs /
+    underwater / gravity, gravity volumes, post-process volumes, water volumes (water.cpp: water up to the box's top)"""
+    env, out = p.get("environment", {}), {}
+    if env.get("jump_packs"):
+        out["jump_packs"] = True
+    if env.get("low_gravity"):   # older projects (the xlive mod reads it as jump packs + gravity x0.3)
+        out["low_gravity"] = True
+    if env.get("underwater"):
+        out["underwater"] = True
+    if float(env.get("gravity", 1.0)) != 1.0:
+        out["gravity"] = float(env["gravity"])
+    vols = []
+    posts = []
+    water = []
+    for v in all_parts(p):
+        lo, hi = volume_local(v)
+        turn = {"yaw": volume_yaw(v)} if volume_yaw(v) else {}   # the xlive mod tests the box turned about its centre
+        if v.get("water"):
+            water.append(dict(min=lo, max=hi, **turn))
+        if volume_gravity(v) is not None:
+            vols.append(dict(min=lo, max=hi, gravity=volume_gravity(v), **turn))
+        if v.get("post"):
+            q = v["post"]
+            posts.append(dict(min=lo, max=hi, tint=[float(c) for c in q.get("tint", [1, 1, 1])][:3],
+                              brightness=float(q.get("brightness", 1)), saturation=float(q.get("saturation", 1)),
+                              contrast=float(q.get("contrast", 1)), fade=float(q.get("fade", 0.5)), **turn))
+    if vols:
+        out["gravity_volumes"] = vols
+    if posts:
+        out["post_volumes"] = posts
+    if water:
+        out["water_volumes"] = water
+    return out
 
 
 def build_scr(stock_scr, stage_out, dst):
@@ -238,12 +373,16 @@ def weather_type(env):
 
 def weather_rates(env):
     """lp2light --weather: the strength for each effect scheduler Efc0-3 (environment.weather.layouts: on per layout,
-    if the game ties them to the 4 layouts; untested)"""
+    if the game ties them to the 4 layouts; untested). The amount (0..100) is rate 0..50, the stock range: the game
+    (DX11 uPlanetEffectVFRWeather::vf80 0xde0bc0) draws 10 x rate x zone amount % particles up to rate 50; above it a
+    lower zone amount makes it heavier (limiter volumes can't work) and over 989 particles none are drawn (rate 100
+    drew nothing)."""
     if not weather_type(env):
         return "0"
     w = env["weather"]
     on = w.get("layouts") or [True] * 4
-    return ",".join(str(int(float(w.get("amount", 0))) if on[i] else 0) for i in range(4))
+    rate = max(1, min(50, round(float(w.get("amount", 0)) / 2)))
+    return ",".join(str(rate if on[i] else 0) for i in range(4))
 
 
 def add_weather(game, A, env, W, log=print):
@@ -349,6 +488,7 @@ def compile_project(game, folder, out_zip, work=None, log=print, library=None):
         raise SystemExit(f"{folder}: " + "; ".join(bad))
     P = lambda rel: lp2project.path(folder, rel)
     info, env, stock_no = p["info"], p["environment"], p["base"].get("stock", 0)
+    no_weather_volumes(p)
     if stock_no != 0:
         raise SystemExit("base.stock: only stock map 0 (Desecration) is supported so far")
     tag = info["tag"]
@@ -372,14 +512,19 @@ def compile_project(game, folder, out_zip, work=None, log=print, library=None):
             tmpl[name] = W("tmpl", name + "." + cls)
             open(tmpl[name], "wb").write(next(d for n, d in stock[k][cls] if base(n).lower() == name))
 
-        models = [P(m) for m in p["stage"]["lp1_models"]]
-        log("stage model: " + ", ".join(os.path.basename(m).split(".")[0] for m in models))
         stage = W("stage")
         shutil.rmtree(stage, ignore_errors=True)
         report(0.05, "stage model")
-        tool("lp2stage.py", "--template", tmpl["online00"], "--out", stage, "--tex-dir", STAGE_DIR,
-             "--light", p["stage"].get("light_scale", 0.5), "--balance", p["stage"].get("light_balance", 1.0), *sum((["--empty", s] for s in STUBS), []), *models,
-             progress=(0.05, 0.55))
+        if p["stage"].get("lp2_stage"):   # an LP2 map's stage, already in the stage format (lp2project import-lp2)
+            models = [os.path.join(P(p["stage"]["lp2_stage"]), *STAGE_DIR.split("\\"), "online00.rModel")]
+            log(f"stage model: LP2 online {p['stage'].get('lp2_map', '?')}")
+            copy_lp2_stage(P(p["stage"]["lp2_stage"]), stage)
+        else:
+            models = [P(m) for m in p["stage"]["lp1_models"]]
+            log("stage model: " + ", ".join(os.path.basename(m).split(".")[0] for m in models))
+            tool("lp2stage.py", "--template", tmpl["online00"], "--out", stage, "--tex-dir", STAGE_DIR,
+                 "--light", p["stage"].get("light_scale", 0.5), "--balance", p["stage"].get("light_balance", 1.0), *sum((["--empty", s] for s in STUBS), []), *models,
+                 progress=(0.05, 0.55))
         geo = lp2pieces.load_geometry(P(p["geometry"]["file"])) if p.get("geometry") else {}
         pieces = None
         if lp2pieces.edited(geo):  # the editor's moved / hidden / copied level geometry
@@ -396,6 +541,9 @@ def compile_project(game, folder, out_zip, work=None, log=print, library=None):
             pieces = (S, per_mesh, n)
             log(f"  geometry edits: {len(geo.get('xf') or {})} atoms moved, {len(geo.get('hidden') or [])} hidden, "
                 f"{len(geo.get('copies') or [])} copies")
+        if lp2bake.settings(p)["source"] == "bake":   # our ray-traced light instead of the LP1 lightmap's
+            report(0.57, "baking the lighting")
+            lp2bake.bake_stage(os.path.join(stage, *STAGE_DIR.split("\\"), "online00.rModel"), folder, p, log)
         sky = env.get("skybox") or {"type": "map"}
         if sky.get("type") in ("stock", "panorama"):
             report(0.58, "sky")
@@ -404,6 +552,16 @@ def compile_project(game, folder, out_zip, work=None, log=print, library=None):
         # the stock map's water planes (effect models, its spots only) -> the stub; water is a project setting
         stub = os.path.join(stage, *STAGE_DIR.split("\\"), STUBS[-1] + ".rModel")
         put(A["main"], {"\\o00water.rModel": stub, "\\o00water2.rModel": stub})
+        sz = lp2sound.project_zones(p, all_parts(p), volume_corners, volume_local)
+        if sz:
+            area = "aArea_ONLINE_%02d" % stock_no
+            rev = next(d for n, d in stock["main"]["rPlanetReverb"] if base(n).lower() == area.lower())
+            files = {}
+            for i, (k, b) in enumerate(lp2sound.build(game, rev, area, *sz).items()):
+                files[k] = W(f"sound{i}." + k.rsplit(".", 1)[1])
+                open(files[k], "wb").write(b)
+            put(A["main"], files)
+            log(f"  sound: {len(sz[1])} reverb zone(s), presets " + ", ".join(sz[0]))
 
         for k, arc in A.items():  # own resource paths
             tool("arcsub.py", arc, arc + ".new", r"scr\\online\\online00\\", "scr\\\\Online\\\\%s\\\\" % tag)
@@ -412,22 +570,48 @@ def compile_project(game, folder, out_zip, work=None, log=print, library=None):
         log("collision + physics")
         report(0.6, "collision")
         files = {}
+        kill = p.get("environment", {}).get("kill_floor")
+        kills = [(volume_corners(v), volume_local(v)[1][1]) for v in all_parts(p) if volume_kill(v)]
         for key, n in (("lp1_move", "atarionline00"), ("lp1_bullet", "tamaonline00")):
             out = W(n + ".rCollision")
-            if pieces:
+            # cached by everything it's made from (the LP1 collision, the template, the stage's LP1 models and the
+            # geometry edits for the pieces, the kill settings, the code)
+            ck = collision_key(P(p["collision"][key]), tmpl[n], models if pieces else [], geo if pieces else {},
+                               kill if key == "lp1_bullet" else None, kills if key == "lp1_bullet" else [], library)
+            hit = os.path.join(cache_dir("collision"), ck + ".rCollision")
+            if os.path.exists(hit):
+                shutil.copyfile(hit, out)
+                log(f"  {n}: unchanged, from the cache")
+                files[f"{tag}\\{n}.rCollision"] = out
+                continue
+            if pieces or ((kill is not None or kills) and key == "lp1_bullet"):
                 groups = lp2col.read_sbc1(open(P(p["collision"][key]), "rb").read())
-                groups, (mv, dr, cp) = lp2pieces.apply_collision(groups, *pieces, geo)
-                extra = lp2pieces.foreign_collision(library, geo, key, folder)
-                groups += extra
-                if extra:
-                    log(f"  {n}: {sum(len(g['tris']) for g in extra)} triangles from other maps' pieces")
+                if pieces:
+                    groups, (mv, dr, cp) = lp2pieces.apply_collision(groups, *pieces, geo)
+                    extra = lp2pieces.foreign_collision(library, geo, key, folder)
+                    groups += extra
+                    if extra:
+                        log(f"  {n}: {sum(len(g['tris']) for g in extra)} triangles from other maps' pieces")
+                    log(f"  {n}: {mv} triangles moved, {dr} dropped, {cp} copied with the geometry")
+                if kill is not None and key == "lp1_bullet":
+                    # the game's kill floor: a 0x200 surface quad in the bullet collision (lp2col.kill_quad)
+                    groups.append(lp2col.kill_quad(groups, float(kill)))
+                    log(f"  {n}: kill floor at {float(kill) / 100:.1f} m")
+                if kills and key == "lp1_bullet":
+                    # kill volumes: the same kill surface over each box's top (the game only checks while falling)
+                    for corners, top in kills:
+                        groups.append(lp2col.kill_top(corners, top))
+                    log(f"  {n}: {len(kills)} kill volume(s)")
                 data, _ = lp2col.write_lp2(groups, open(tmpl[n], "rb").read())
                 open(out, "wb").write(data)
-                log(f"  {n}: {mv} triangles moved, {dr} dropped, {cp} copied with the geometry")
             else:
                 log("  " + tool("lp2col.py", P(p["collision"][key]), tmpl[n], out).strip().split(": ", 1)[1])
+            cache_put(hit, out)
             files[f"{tag}\\{n}.rCollision"] = out
-        if pieces and p["collision"].get("rebuild_physics"):
+        if p["collision"].get("lp2_physics"):   # an LP2 map's own (map space, as the stage)
+            shutil.copyfile(P(p["collision"]["lp2_physics"]), W("hav.rHkCollision"))
+            log("  physics: the LP2 map's own" + (" (it keeps the original geometry)" if pieces else ""))
+        elif pieces and p["collision"].get("rebuild_physics"):
             log("  " + rebuild_physics(P(p["collision"]["lp1_physics"]), tmpl["havonline00"], W("hav.rHkCollision"),
                                        pieces, geo, library, folder))
         else:
@@ -478,7 +662,7 @@ def compile_project(game, folder, out_zip, work=None, log=print, library=None):
                     open(os.path.join(li, b + "." + cls), "wb").write(data)
         json.dump(env["camera"] or camera(floor), open(W("cam.json"), "w"))
         bounds = f"{floor.lo[0] - 500:.0f},{floor.lo[2] - 500:.0f},{floor.hi[0] + 500:.0f},{floor.hi[2] + 500:.0f}"
-        curves = ";".join(f"{c}:{csv(v)}" for c, v in env["curves"].items())
+        curves = ";".join(f"{c}:{csv(v[0])}/{csv(v[1])}" for c, v in lp2project.curves(env).items())
         light_env = {k: env.get(k) for k in ("sun_colour", "sky_colour", "ground_colour", "ambient", "scatter")}
         light_env["lights"] = p.get("lights") or []
         json.dump(light_env, open(W("light_env.json"), "w"))
@@ -503,8 +687,9 @@ def compile_project(game, folder, out_zip, work=None, log=print, library=None):
 
         preload = preload_arcs(game, ip_out)
         log(f"  preload: {len(preload)} VS / weapon archives")
-        json.dump(dict(name=info["name"], base=0, number=0, size=info["size"], preload=preload),
-                  open(os.path.join(pkg, "map.json"), "w"), indent=1)
+        manifest = dict(name=info["name"], base=0, number=0, size=info["size"], preload=preload)
+        manifest.update(gravity_manifest(p))
+        json.dump(manifest, open(os.path.join(pkg, "map.json"), "w"), indent=1)
         th = info.get("thumbnail")
         if th:
             tool("lp2thumb.py", P(th["image"]), os.path.join(pkg, "thumbnail.rTexture"), "--zoom", th.get("zoom", 1),

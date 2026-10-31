@@ -197,7 +197,7 @@ def collision_owners(groups, S, per_mesh):
     """per group, per triangle: the stage atom nearest its centre (within NEAR), or WALL - k for collision-only
     wall k: triangles with no visible geometry near (invisible boundaries), joined by shared corners (welded to
     1 cm) and numbered by their first triangle, so the same map always gives the same wall ids."""
-    samples, ids = atom_samples(S, per_mesh)
+    nearest = atom_finder(*atom_samples(S, per_mesh))
     own, loose = [], []
     for gi, g in enumerate(groups):
         if not g["tris"]:
@@ -205,7 +205,7 @@ def collision_owners(groups, S, per_mesh):
             continue
         V = np.asarray(g["verts"], np.float64).reshape(-1, 3)
         tri = np.array([t for t, _ in g["tris"]], np.int64)
-        o = nearest_atom(V[tri].mean(1), samples, ids)
+        o = nearest(V[tri].mean(1))
         own.append(o)
         loose += [(gi, int(k)) for k in np.nonzero(o == -1)[0]]
     parent = list(range(len(loose)))
@@ -453,10 +453,9 @@ def atom_samples(S, per_mesh, region=None):
     return np.concatenate(pts), np.concatenate(ids)
 
 
-def nearest_atom(points, samples, sample_ids):
-    """Atom of the nearest sample within NEAR of each point, else -1 (grid of NEAR cells, 27 neighbours)."""
-    res = np.full(len(points), -1, np.int64)
-    best = np.full(len(points), NEAR * NEAR)
+def atom_finder(samples, sample_ids):
+    """-> nearest(points): atom of the nearest sample within NEAR of each point, else -1 (grid of NEAR cells,
+    27 neighbours; the grid is made once)."""
     cell = lambda p: np.floor(p / NEAR).astype(np.int64)
     sc = cell(samples)
     grid = {}
@@ -465,15 +464,23 @@ def nearest_atom(points, samples, sample_ids):
     ends = np.append(start[1:], len(order))
     for k, s, e in zip(map(tuple, keys), start, ends):
         grid[k] = order[s:e]
+    return lambda points: nearest_atom(points, samples, sample_ids, grid, cell)
+
+
+def nearest_atom(points, samples, sample_ids, grid, cell):
+    res = np.full(len(points), -1, np.int64)
+    best = np.full(len(points), NEAR * NEAR)
     pc = cell(points)
     by_cell = {}
     for i, k in enumerate(map(tuple, pc)):
         by_cell.setdefault(k, []).append(i)
-    for k, idx in by_cell.items():
+
+    def search(item):   # one cell's points (each point is in one cell: the threads write apart)
+        k, idx = item
         cand = [grid[n] for n in ((k[0] + dx, k[1] + dy, k[2] + dz) for dx in (-1, 0, 1) for dy in (-1, 0, 1)
                                   for dz in (-1, 0, 1)) if n in grid]
         if not cand:
-            continue
+            return
         cand = np.concatenate(cand)
         idx = np.array(idx)
         d = ((points[idx, None] - samples[None, cand]) ** 2).sum(2)
@@ -482,7 +489,19 @@ def nearest_atom(points, samples, sample_ids):
         ok = dm < best[idx]
         res[idx[ok]] = sample_ids[cand[j[ok]]]
         best[idx[ok]] = dm[ok]
+    list(_pool().map(search, by_cell.items()))
     return res
+
+
+_POOL = None
+
+
+def _pool():
+    global _POOL
+    if _POOL is None:
+        from concurrent.futures import ThreadPoolExecutor
+        _POOL = ThreadPoolExecutor(os.cpu_count() or 4)
+    return _POOL
 
 
 def apply_collision(groups, S, per_mesh, n, geo):

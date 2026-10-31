@@ -84,9 +84,10 @@ def patch_initpos(b, lay):
     for p in lay["points"]:
         by_role.setdefault(p["role"], []).append(p)
     for p, (_, off) in zip(pts, vecs):
-        src = by_role.get(KIND_ROLE.get(p["Kind"], "start")) or by_role.get("start")
+        # the role's points, else the FFA starts, else any (an LP2 map's mode may have only team spawns)
+        src = by_role.get(KIND_ROLE.get(p["Kind"], "start")) or by_role.get("start") or lay["points"]
         if not src:
-            raise ValueError("layout has no FFA starts to fall back on")
+            raise ValueError("layout has no spawn points")
         k = used.get(id(src), 0)
         used[id(src)] = k + 1
         q = src[k % len(src)]
@@ -257,6 +258,64 @@ def patch_objset(b, lay, lp1_vs=False):
         new_counts[g] = kept
     struct.pack_into("<4H", out, 0x0A, *(new_counts[g] for g in (1, 2, 3, 4)))
     return bytes(out + b[end:]), counts, new_counts
+
+
+def stock_layout(files):
+    """a stock map's spawn / pickup files [(entry base name, class, data)] -> an explicit editor layout (the inverse
+    of patch_initpos / patch_objset): one set per variant (-00 .. -03), every game type's markers in it, a marker
+    seen in several game types' files once with those "modes". VS are "placed" (their type is written back)."""
+    sets = {}
+    def add(lst, q, mode):
+        k = json.dumps({x: y for x, y in q.items() if x != "modes"}, sort_keys=True)
+        for o in lst:
+            if o["_k"] == k:
+                if mode not in o["modes"]:
+                    o["modes"].append(mode)
+                return
+        lst.append(dict(q, modes=[mode], _k=k))
+    for name, cls, b in sorted(files):
+        mode, m = file_mode(name), re.search(r"-(\d\d)$", name)
+        if not mode or not m:
+            continue
+        v = m.group(1)[1]
+        st = sets.setdefault(v, {"ids": ["0" + v], "explicit": True, "modes": [], "points": [], "objects": []})
+        if mode not in st["modes"]:
+            st["modes"].append(mode)
+        if cls == "rInitPosSet":
+            for q in xfs.parse(b)["mInitPosSet"]["mpArray"]:
+                add(st["points"], dict(role=KIND_ROLE.get(q["Kind"], "start"), kind=1, pos=[round(x, 2) for x in q["Pos"]],
+                                       yaw=float(q["Dir"])), mode)
+            continue
+        counts, _, _ = objset.parse(b)
+        off = 0x30
+        for g in (1, 2, 3, 4):
+            for _ in range(counts[g]):
+                rec = b[off:off + objset.SIZES[g]]
+                off += objset.SIZES[g]
+                pos = [round(x, 2) for x in struct.unpack_from("<3f", rec, 0x40)]
+                yaw = round(struct.unpack_from("<f", rec, 0x54)[0], 2)
+                item = struct.unpack_from("<H", rec, 0x1A)[0]
+                tier = struct.unpack_from("<I", rec, 0x04)[0]
+                if g == 1:
+                    weapons = [list(struct.unpack_from("<BxH", rec, 0x120 + 5 * i)) for i in range(4)]
+                    add(st["objects"], dict(role="vs", kind=1, model="vs%02x" % item, placed=True, tier=tier, pos=pos,
+                                            yaw=yaw, weapons=weapons), mode)
+                elif g == 4:
+                    add(st["objects"], dict(role="weapon", kind=4, model="wp%02x" % item, item=item, tier=tier, pos=pos,
+                                            yaw=yaw), mode)
+                elif g == 3 and is_post(rec):
+                    add(st["objects"], dict(role="object", kind=3, model="om%02x%02x" % (rec[0x1A], rec[0x1B]), pos=pos,
+                                            yaw=yaw), mode)
+    out = []
+    for v in sorted(sets):
+        st = sets[v]
+        for lst in (st["points"], st["objects"]):
+            for o in lst:
+                o.pop("_k")
+                if sorted(o["modes"]) == sorted(st["modes"]):
+                    o.pop("modes")   # in every game type
+        out.append(st)
+    return {"explicit": True, "lp2": False, "units": "cm, LP2 map space (Y up)", "sets": out}
 
 
 def main():

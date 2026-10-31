@@ -101,7 +101,7 @@ Possible path: Godot for the app; keep the Blender scripts as a power-user route
   PROJECT/.preview/stage.glb (stage via lp2stage, BM textures as PNG, baked light as COLOR_0). Editor: fly cam,
   baked / lit shading, markers per layout 1-4 + set, screen-space picking, drag on ground, inspector, map info,
   water, save, export (lp2mapc), install (backup). Save round-trip: no type changes; positions differ only past
-  f32 precision. Test project: ~/Projects/lp2-assets/projects/Area921 (raw LP1 import, NOT the installed
+  f32 precision. Test project: ~/Projects/LostPlanet2Maps/Ports/Area921 (raw LP1 import, NOT the installed
   Area921 layout).
 - Next: add / delete / duplicate markers (lp2layout record cloning), marker models from the game (asset cache),
   stock LP2 map import, undo.
@@ -373,3 +373,164 @@ havok mesh like the collision, plus other maps' pieces' tama). Fixed: other maps
   effects, plus DLL hooks for what no class does (T-ENG drain per frame while firing; heat if no class has it).
   New ids need registering like the parts carrier slots. First step: decompile the VS laser weapon classes (fire
   modes, heat / energy fields in fields.tsv) and list what each already supports.
+- (2026-10-28) Boss GTF-11 (vs40 on 0x82, notes/vs-ids.md): its left-hand custom laser (hard-locked) and the leg
+  rocket launchers are model geometry today; give them real weapon types (same research as the Welding Beam).
+
+## 2026-10-28: ray-traced lighting bake (lp2bake.py) — built, untested in game
+- lp2bake.py (Embree via pip embreex): sun (soft shadows), sky + ground, placed point/spot lights (start/end fade,
+  cone + soft edge, shadowed), glowing materials (stage.light.emissive {colour map: rgb}; no UI yet), N bounces with
+  material average albedo. Per-vertex (the stage format has no lightmap UV). Rays start spread over each vertex's
+  surrounding triangles (else floors at wall feet all shadowed); back-face hits = sample discarded (origin inside
+  geometry); LP1's sky dome (>2 km out) excluded and keeps its colour; seams averaged.
+- Components stored apart (sun/sky/ground white, lights, glow; bounces included) -> .preview/bake.bin as CUSTOM0-3;
+  baked.gdshader combines them live (sun/sky/lights/glow strength, exposure, min light, env colours). Rebake for
+  geometry / light placement / sun direction / bounces / samples. Battlegrounds: ~26 s, 1.4 GB RAM.
+- Light model assumption: vertex colour c is gamma-space light, pixel = tex x (2c)^2.2 (also fixed in the editor's
+  baked shader; interiors used to show mid grey). CALIBRATION 0.48 = Battlegrounds default bake median = LP1's.
+- Hooks: Lighting window "Baked lighting" (source LP1/bake, sliders, Bake button); lp2preview re-bakes a rebuilt
+  preview; lp2mapc bakes the final stage (after geometry edits) when source = bake. Preview key ignores stage.light.
+- Detail (stage.light.detail = +% vertices): quick bakes (16 rays, 1 bounce) find triangles whose corners' light
+  differs > 1.5x, split their longest edge (and every triangle sharing it), up to 3 passes, then the full bake.
+  Preview keeps the unsplit geometry in .preview/geo_base.*; the build splits the final stage (tangents / w bytes
+  carried; write_stage splits meshes past 64K). Battlegrounds +30%: +81k vertices, preview 63 s, package 39.1 -> 41.1 MB.
+- TODO: in-game check of the gamma assumption; emissive material picker UI; add embreex to the release PKGS (cp312
+  wheels: check Windows); triangle splitting for sharper shadows (phase 3); bake_btn stays disabled if the bake fails.
+- Editor tests run headless: gamescope --backend headless + --screenshot (low_processor_mode is off for screenshots).
+
+## Backlog: "we'll get back to it" (user, 2026-10-28)
+- Handgun class (user, 2026-10-28): the stock game never has handgun pickups (one campaign mission gives it as a
+  spawn weapon); we add placeable handguns to MP as a QOL change, later as their own class with sub-options (default
+  pistol, heavy pistol, SMG). The editor shows 0x0c as the default handgun (Wp0c). The importer writes 0x0c records
+  (14 on Battlegrounds): check where those come from in the importer/decompile pass.
+- Map thumbnails in Create Match: still not showing for custom maps (DLL ID221_SC<slot>_ID swap from
+  handoff-2026-10-19-map-port.md / lp2thumb.py). Re-test, then find why.
+- Start camera (the match-intro / pre-spawn camera, project environment.camera): still not taking effect in game.
+- Havok world box: NOT the z-kill (2026-10-28, DX9). FUN_007ff3a0 builds the hkpWorldCinfo (ctor FUN_01064ac0;
+  layout from the exe's hkClass members: gravity +0x10, broadPhaseQuerySize +0x20, broadPhaseBorderBehaviour +0x28,
+  broadPhaseWorldAabb +0x30/+0x40, collisionTolerance +0x54), setBroadPhaseWorldSize(FUN_01064c90, DAT_016e73cc =
+  30000.0) -> AABB -15000..15000 Havok units, border = 2 (REMOVE_ENTITY). Game -> Havok is cm * 0.01
+  (DAT_0135b6bc), gravity -9.8 (DAT_016e7408): the box is +-15 km on every map, a single constant, never reached.
+- Kill floor / fall death: SOLVED at runtime 2026-10-28 (DX9, NEOS). uCharacterBase::vf49 (0x9c3fb0) casts a
+  collision ray down from the character (FUN_009b51a0 -> FUN_004c15d0, sCollision::TriangleInfo) and takes the hit
+  triangle's surface attribute (FUN_0082fe30(2) = surface record u32 word 3); FUN_009ab9e0: attr & 0x700 -> lethal,
+  FUN_009aba20 kills (health setter 0x9aba8b, health = char+0x18c8 XOR [DAT_018427b0]+0x1f58; char =
+  *(*(*(*0x01842020+0x28)+0x484)+0x200)). Death logged at y -78.8 m; the floor is at -81 m.
+  Stock data: the TAMA (bullet) rCollision holds a flat 2-triangle quad with a surface whose word 3 = 0x200
+  (other surfaces: 0..0xf, 0x2003, 0xff on atari): ONLINE_00/02/05/07/10 2 tris, 01 18 tris, 06 0x100 x32 tris;
+  03/04/08/09/11/12/15 none. NEOS: y -8100 cm, x -51000..-9500, z -23000..23000.
+  Editor: kill volume = add a surface (word 3 = 0x200) + its triangles to the tama collision (lp2col / apply_
+  collision); a box = its top face (or all 6 faces). LP1 imports need one too (map-wide quad below the lowest point).
+- Volume types wanted (user): kill zone, low gravity (affecting everything: characters, Havok, grenades), boost
+  pack (NEOS: short horizontal air boost) as a map option.
+- Gravity + volumes IMPLEMENTED 2026-10-28 (untested in game): xlive src/mods/gravity.cpp wraps the per-area flag
+  table call (DX9 FUN_00869940 @ call RVA 0x46c10e / DX11 0x478ff0 @ 0x47b7be; table: episode +0x257 7 = online,
+  area +0x25a; online 7 -> flag n6 low gravity, online 2/3/5/6/8/11 -> n5 underwater) and the character gravity
+  update call (DX9 FUN_009acef0 @ 0x5ae4bd, mGravity +0x17bc; DX11 0x5bc860 @ 0x5bde2d, +0x17cc). map.json
+  low_gravity / underwater / gravity (also scales [main]+0x511d0 Havok world gravity) / gravity_volumes (boxes,
+  cm). Editor: Map info checkboxes + Gravity x; volumes.gd (project "volumes": kill / gravity boxes; kill = 0x200
+  quad over the box top, lp2mapc). Grenades / projectiles: not yet (own uShell gravity).
+- Backlog (user): volume colour grading / "underwater visuals" per area (tone map tweak inside a volume): needs
+  the game's post-process hook.
+- Low gravity, decoded 2026-10-28 (DX9, runtime on NEOS): CHARACTERS only. FUN_009acef0: cJump mGravity
+  (char+0x17bc) = mGravityOrg (+0x17c0) x factor from stage flags [DAT_018c080c]+0x14598 (bits set as
+  0x80000000 >> n, setter FUN_0083e700 / clear 0x7c...): 0x02000000 (n 6) -> x0.3 map-wide (_DAT_0135b19c);
+  0x04000000 (n 5) + FUN_007edf20(pos) zone test -> x0.8 / 0.7 / 0.5 / 0.4 (DAT_016e73ec / 7488 / 01356e8c /
+  016e72f8; by +0x17b4 sign and FUN_009a1bf0 == 2). NEOS flags 0x0a010000 (n 4, 6, 15): n 4 = boost pack? Who
+  sets them at load: unknown (write-watch stage+0x14598 across a NEOS load).
+  Havok world gravity: [DAT_01842020]+0x511d0 vec, (0,-9.8,0) on every map incl. NEOS, read by FUN_007ff3a0 when
+  the world is built -> per-map DLL write before that. Grenades/projectiles: own uShell mGravity per class (NEOS
+  grenades arc normally) -> DLL hook. Plan: map.json gravity -> DLL sets the stage flag/factor, world gravity
+  and a shell scale.
+- Bike pickups inside Battlegrounds buildings (2026-10-30, FIXED, untested in game): not an LP1 id mapping. LP1's
+  Colonies layouts hold only ~60 ordinary weapons; every other weapon marker is lp2convert's fill of LP1's k40 points
+  + FFA starts with Desecration's stock Team records in order, which include the vsd1 bike gear (items 0x1D / 1F /
+  21 / 23; 0x1C / 1E / 20 / 22 are energy cores). lp2convert GEAR: the fill skips them, fix_gear turns ones already
+  on k40 / start points into Slot: Standard (0x30). Applied: Area921 41 (8 elsewhere kept), Battlegrounds 57,
+  BattlegroundsBoss 57, CrossfireCity 56; packages rebuilt + installed. LP1 PC (Steam: ~/.local/share/Steam/
+  steamapps/common/lost planet extreme condition, x86, unpacked, DTI names) is there for later RE.
+- Detail budget counts vertices; triangles grow ~2x faster (100% = 2.5x tris): budget by triangles instead.
+
+## 2026-10-28 later: volumes rework, post-process, jump packs
+- Volumes: own outliner category; combinable effects per box: kill / gravity / post / no_weather (old "type" and
+  environment.weather.volumes migrate on open). Ctrl+drag a face pushes/pulls it (Shift snaps).
+- Post-process volumes: xlive post.cpp adds its own uPlanetColorCorrectFilter (factory DX9 0x7bf970 / DX11 0x7ce7f0,
+  sUnit [0x18c0c30]/[0x18d0cd0] add 0x4a0740/0x4a1900 line 6), vtable copy with vf6/vf0 ours; correctors 8 (rgb
+  multiply), 5 (saturation, 0.5 = 1), 9 (levels). Camera: sCamera [0x18c0c3c]/[0x18d0cdc] +0x34 -> +0x40. UNTESTED.
+- "Low gravity" is now "jump_packs" (flag 0x02000000 with the game's x0.3 undone; map gravity decides).
+- Thumbnail in game: BLOCKED, the id221 Flash's mc_monitor frames for maps 13/14 are empty (packages.cpp
+  GenerateThumbnails is disabled). Needs a GFx edit giving those frames a picture (rules.cpp already edits id221).
+- Fog (distance + ground) reported not rendering in game: investigate.
+- Gravity volume test was at map gravity 0.045 (0.15 x low 0.3): x2 hard to notice; DLL now logs entering a volume.
+- Volume effects are settings on one box (post-process is one of them, a "post-process volume" = only that ticked).
+  Future effects to add the same way: damage over time, heat regen (thermal energy) zones.
+- Place window: kind "Volume" (effect dropdown), click = 10 m box, drag = floor rectangle.
+- 2026-10-28 test: gravity volume works in game (logged entry). Post filter: made twice (character updates run on
+  several threads) -> double grade + flicker; fixed with an interlocked owner flag. Neutral grade now settles
+  exactly (identity matrix + default curves/gamma = the game skips the filter's draw).
+- Backlog: audio volumes (muffling / reverb / low-pass inside a box, e.g. underwater) as another volume setting.
+- DONE (untested on Windows): rebuild preview 31 s -> 3.5 s (Battlegrounds). lp2stage: textures + lightmaps cached
+  by source hash (~/.cache/lp2-tools/stage-tex, %LOCALAPPDATA% on Windows; bump TEX_VERSION when lp2tex changes),
+  made in a process pool; vertex packing + balance in numpy. Output byte-identical to before. lp2preview PNGs in a
+  thread pool. Left: lp2pieces.default_tree ~1.9 s. GPU only worth it for Bake lighting.
+
+## Export speed (2026-10-28)
+- Caches (~/.cache/lp2-tools: stage-tex, bake, collision) + cores: Battlegrounds cold export ~125 s -> 63 s, warm 12 s,
+  output byte-identical. lp2bake: rays split over a thread pool (embree releases the GIL), bounces gathered for all lit
+  components at once (CSR rows over threads), threaded setup. lp2pieces: atom grid built once per collision file
+  (was per group: 78x), per-cell search threaded. Windows bundle still to test (thread pool, no new packages).
+- Later (user, 2026-10-28): shadow maps beat vertex lighting for sharp shadows; or use shadow-map-style sun
+  visibility to decide where the detail pass adds vertices (split along real shadow edges, not vertex contrast).
+- Next steps in order (user, 2026-10-28): see notes/handoff-2026-10-28-next.md: shadow-map vertex splitting, detail
+  above 100% with a memory warning, import LP2 assets, sound volumes, particle zones & emitters, sound nodes, random
+  logic for both (timing, offsets, volume, pitch... as ranges).
+
+## 2026-10-30: project location
+- LP1 port projects (Area921, Battlegrounds, BattlegroundsBoss, CrossfireCity) moved from lp2-assets/projects to
+  ~/Projects/LostPlanet2Maps/Ports (user's choice). Older notes (bugs-2026-10-21-mp-test.md) keep the old path.
+
+## 2026-10-30: weapon drop mapping, settled
+- LP2 tree (dx11 classes.txt): uWp08 grenade base -> 15-19 grenades; uWp1a -> 1c/1e/20/22 energy cores; uWp1b ->
+  1d/1f/21/23 vsd1 bike gear; uWpCategory -> 30-34 loadout-slot pickups; 41-47 / 60-6E VS weapons.
+- LP1 PC tree (ghidra/dti scan.py + names.py on LostPlanetDX9.exe): uWp00-08, 40-50, 5f; Colonies (360) adds 0c, 0d,
+  0e, 0f, 60-63. LP1 weapon id = record byte 0x1a (BE high byte), sub-type in 0x1b (grenade kinds: wp_08xx sound
+  banks 01/08/0b/14/16); every Colonies layout uses 0800. No LP1 layout (s900, s920-923) has anything in 15-1f / 30-34.
+- Audit of the 4 ports after fix_gear: every LP1-origin drop matches lp2convert's rules; the rest are the stock fill
+  (grenades, slots, cores, 0x0c, VS weapons). Area921's 8 off-point bike gears (2 spots x 4 sets) were old fills too
+  -> Slot: Standard. LP1 Colonies 0c pistol -> 0x0c handgun, 0d revolver -> 0x31 Short, 0e hand cannon -> 0x33 Heavy, 0f flamethrower ->
+  0x31 Short (user identified them from model renders, 2026-10-30; lp2convert LP1_WEAPONS). Open:
+  what LP1's k40 points are (LP1 PC exe could say).
+
+## 2026-10-30: sound zones (reverb), first cut
+- Stock maps already have reverb zones: Sound\reverb\<area> (rPlanetReverb XFS: presets, 4 cReverbParam I3DL2 each)
+  and Sound\seg\reverb\<area>_rv (rSoundSeGenerator SEG v8, 0x2c0 records = LayoutInfo from +0x90; layout in
+  lp2sound.py's docstring). A zone = 4 floor corners + height; entering sets preset SET REVERB, leaving SET REVERBOUT.
+- lp2sound.py + sound_presets.json (18 stock presets); lp2mapc writes both files when a volume has
+  "sound": {"reverb": key} or environment "sound": {"reverb"} is set (map default = preset 0 + a map-wide zone).
+  Editor: volume "Reverb" checkbox + preset list (volumes.gd REVERBS). No xlive change.
+- Untested in game. Unknowns: SET REVERB = index vs mUniqueID (we write both equal); overlap priority (we put rooms
+  before the map-wide zone, as Frozen Wasteland). Not yet: editor UI for the map default, shutout (muffling) zones.
+
+## 2026-10-30: .lpme files, My assets, LP2 import (untested by the user)
+- .lpme = zip of the project folder (no .preview / build); the editor unpacks it to user://work/<name>-<md5(path)[:8]>
+  (lpme.gd), works there, packs back on every save (worker thread, ~2 s). Old folders still open (pick project.json).
+  The 4 ports packed to Ports/*.lpme (folders kept until the user drops them); recent project = Battlegrounds.lpme.
+- Toolbar: "Import map from LP/LP2..." (newmap.gd: LP1 arcs or LP2 online maps -> a new .lpme); Mesh builder button
+  gone (M still opens it). Browser tab "My assets": folders (project "browser"), prefabs (pf "folder") + custom meshes.
+- LP2 import (lp2project.py import-lp2): built like an LP1 port on Desecration, from the asset library's converted
+  stage (lp2stockmaps.py) + SBC1 collision, the map's own rHkCollision, layout from its stock files
+  (lp2layout.stock_layout), stage.light source bake, its sky / reverb. Kraftwerk builds (107 MB) and opens.
+  Open: memory 112 / 67 MB (whole stock stage, over Desecration's budget); bake median light 0.013 (dark?); the
+  stock map's gimmicks / effects / music aren't carried (Desecration's music).
+- Create-match picture always Desecration: maps without a thumbnail (Area921, BattlegroundsBoss) use the base's,
+  and the id221 textures are resident from the title archives, so a rebind while scrolling doesn't change them.
+  Fix needs a live texture update on rebind (DLL: find the rTexture, update its D3D9 / D3D11 texture).
+
+## 2026-10-31: ROADMAP (user): terrain editing
+- Terrain area: place, select, Ctrl+drag its edges to grow / shrink (volume face-drag code); painted data kept in world
+  space, so resizing crops / extends instead of stretching.
+- Edit button: lock + grey out everything else, show only the terrain, toolbar: height (raise / lower), smoothing,
+  texture paint, texture fill, hole cutting. Brush size + strength, each optionally tied to pen pressure
+  (InputEventMouseMotion.pressure).
+- Game side open question: does any stock stage material blend layers (mask / vertex weights)? Else bake the painted
+  layers into per-chunk textures (memory budget) and give collision faces the dominant layer's surface flags
+  (shares the surface painter's flag decoding).

@@ -8,7 +8,8 @@ Layout: 'XFS\\0' u16 ver(8) u16 1 u32 classCount u32 defSize
   u32 classOff[classCount] (relative to 0x10)
   class: u32 hash, u32 nfields, fields[24]: u32 nameOff(rel 0x10) u8 type u8 attr u16 size +12
   data @0x10+defSize: object = u16 (classIdx<<1|1) u16 id u32 size, then per field:
-  u32 count, count * value.  type 1/2 = nested object, 0x14 = vec3 (16 bytes).
+  u32 count, count * value.  type 1/2 = nested object, 0x14 = vec3 (16 bytes), 0x80 = resource reference
+  (u8 2, class name, path; "null" with an empty path).
 """
 import json, struct, sys
 
@@ -54,6 +55,14 @@ def parse(b, vec_offsets=None):
                     if vec_offsets is not None:
                         vec_offsets.append((name, pos[0]))
                     vals.append([round(x, 2) for x in u("<4f")[:3]])
+                elif t == 0x80:
+                    pos[0] += 1
+                    cls = b[pos[0]:b.index(b"\0", pos[0])].decode("latin-1"); pos[0] += len(cls) + 1
+                    path = b[pos[0]:b.index(b"\0", pos[0])].decode("latin-1"); pos[0] += len(path) + 1
+                    vals.append(None if cls == "null" else f"{cls}:{path}")
+                elif t == 0xE:   # string: NUL-terminated
+                    v = b[pos[0]:b.index(b"\0", pos[0])]; pos[0] += len(v) + 1
+                    vals.append(v.decode("latin-1"))
                 elif t in SCALAR:
                     vals.append(u(SCALAR[t])[0])
                 else:
