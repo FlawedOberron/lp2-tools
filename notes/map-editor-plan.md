@@ -589,3 +589,8 @@ havok mesh like the collision, plus other maps' pieces' tama). Fixed: other maps
   pen pressure untested with a real tablet; View collision / bake preview still don't show terrain.
 - Next candidates: triplanar UVs for cliffs (export too), baked smooth-blend export mode, ground types per layer
   (needs the collision flag decode), terrain in View collision.
+- 2026-10-31 later: Holes tool "Brush: Cut holes / Add ground" (Shift swaps). Add ground past the edge grows the grid
+  (_grow_to: to the brush + 4 spare cells, MAX_CELLS cap), new cells start as holes, new points carry the edge's
+  height + paint, so painted shapes join the edge; off-grid brush point = the ray on the nearest edge's level
+  (_brush_point). Tested: +x stroke 40 -> 49 cells, only brushed cells ground, undo restores. _bounds y range cached
+  (node meta y_range; update_marker clears, height strokes widen, stroke end clears).
