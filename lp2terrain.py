@@ -9,8 +9,13 @@ Project "terrains": [{"id", "name", "pos": [x, y, z] (cm: the grid's corner, cel
   terrain/<id>.r32   (nx + 1) * (nz + 1) little-endian float32 heights (cm above pos y), rows along x, one per z
   terrain/<id>.w8    4 bytes per height point: paint layers 1-4's weights (the base has what they leave of 255)
   terrain/<id>.hole  1 byte per cell, rows along x: 1 = a hole (no ground, no collision)
-Missing files: flat, unpainted, no holes. Each cell takes its strongest layer (cell_layers, as the editor's
-terrain.cell_layer) and is built with that layer's material, so the borders follow the cells.
+Missing files: flat, unpainted, no holes. A paint layer's "slope": {on, min, max, soft} (degrees) also lays it on
+every point that steep, live (effective: the layer raised to rule_weight, then all scaled back to 255; the editor's
+terrain._effective alike).
+Sharp (default): each cell takes its strongest layer (cell_layers, as the editor's terrain.cell_layer) and is built
+with that layer's material, so the borders follow the cells. "blend": true: the blended layers are baked
+(bake_parts) into colour / normal / mask textures per chunk of up to 1024 px at "bake_px" pixels per metre,
+project materials terrain_bake_<id>_<cx>_<cz>, so the blends are smooth (and softer close up than the tiled ones).
 
 A terrain is built like a mesh import (lp2mesh.build_import with its triangles made here) into PROJECT/terrain/<id>/,
 then placed through the foreign-copy path as "@project/terrain/<id>" with an identity matrix (the piece is built in
@@ -60,6 +65,113 @@ def cell_layers(W):
     full = np.concatenate([np.maximum(255 - w.sum(-1, keepdims=True), 0), w], -1)   # (nz+1, nx+1, 5)
     s = full[:-1, :-1] + full[:-1, 1:] + full[1:, :-1] + full[1:, 1:]
     return np.argmax(s, -1)
+
+
+def rule_weight(deg, lo, hi, soft):
+    if soft <= 0:
+        return ((deg >= lo) & (deg <= hi)).astype(np.float64)
+    return np.clip((deg - (lo - soft)) / soft, 0, 1) * np.clip(((hi + soft) - deg) / soft, 0, 1)
+
+
+def effective(t, H, W):
+    """the paint with the slope rules applied -> weights (nz+1, nx+1, 4) uint8"""
+    rules = [(k, layer(t, k)["slope"]) for k in range(1, LAYERS)
+             if isinstance(layer(t, k).get("slope"), dict) and layer(t, k)["slope"].get("on")]
+    if not rules:
+        return W
+    gz, gx = np.gradient(H, float(t["cell"]))   # central differences, one-sided at the edges (as the editor)
+    deg = np.degrees(np.arctan(np.hypot(gx, gz)))
+    E = W.astype(np.float64)
+    for k, r in rules:
+        E[..., k - 1] = np.maximum(E[..., k - 1], rule_weight(deg, float(r.get("min", 35)), float(r.get("max", 90)),
+                                                              float(r.get("soft", 5))) * 255.0)
+    s = E.sum(-1, keepdims=True)
+    E = np.where(s > 255.0, E * 255.0 / np.maximum(s, 1e-9), E)
+    return np.clip(np.floor(E + 0.5), 0, 255).astype(np.uint8)
+
+
+def _wrap_sample(img, u, v):
+    """bilinear, wrapping: img (h, w, c) float at texture coordinates u, v (any shape) -> (..., c)"""
+    h, w = img.shape[:2]
+    x, y = u * w - 0.5, v * h - 0.5
+    x0, y0 = np.floor(x).astype(np.int64), np.floor(y).astype(np.int64)
+    fx, fy = (x - x0)[..., None], (y - y0)[..., None]
+    x0, y0, x1, y1 = x0 % w, y0 % h, (x0 + 1) % w, (y0 + 1) % h
+    return (img[y0, x0] * (1 - fx) + img[y0, x1] * fx) * (1 - fy) + (img[y1, x0] * (1 - fx) + img[y1, x1] * fx) * fy
+
+
+def _layer_images(project, mname, tile, px):
+    """a layer material's colour / normal / mask, each resized to tile * px pixels a side -> {kind: float array}"""
+    from PIL import Image
+    m = lp2mesh.load_material(project, mname) or {}
+    n = max(4, int(round(tile * px)))
+    out = {}
+    for kind, flat in (("bm", None), ("nm", (128, 128, 255)), ("mm", (0, 0, 0))):
+        if m.get(kind):
+            im = Image.open(os.path.join(lp2mesh.mat_dir(project, mname), m[kind])).convert("RGBA").resize((n, n), Image.LANCZOS)
+            out[kind] = np.asarray(im, np.float64)
+        else:
+            c = flat or tuple(int(round(255 * min(1.0, max(0.0, x)))) for x in m.get("colour", (0.8, 0.8, 0.8)))
+            out[kind] = np.array([[[*c, 255]]], np.float64)
+    return out
+
+
+def bake_parts(project, t, H, E, O, log=print):
+    """the smooth blend: chunks of cells, each with its own baked material (UVs 0..1 over the chunk)
+    -> (parts, {part material key: project material})"""
+    from PIL import Image
+    nz, nx = O.shape
+    cm = float(t["cell"]) / 100.0               # metres per cell
+    px = float(t.get("bake_px", 16.0))
+    per = max(1, int(1024 // (px * cm)))         # cells per chunk side
+    x0, _, z0 = (float(v) / 100.0 for v in t["pos"])
+    lays = {k: material(project, t, k) for k in range(LAYERS)}
+    imgs = {}
+    parts, slots = [], {}
+    w_full = np.concatenate([np.maximum(255 - E.astype(np.int32).sum(-1, keepdims=True), 0), E.astype(np.int32)], -1) / 255.0
+    for cz in range(0, nz, per):
+        for cx in range(0, nx, per):
+            cells = np.zeros_like(O)
+            cells[cz:cz + per, cx:cx + per] = True
+            cells &= ~O
+            if not cells.any():
+                continue
+            wc, dc = min(per, nx - cx), min(per, nz - cz)   # cells
+            T = lp2mesh.pot(int(np.ceil(max(wc, dc) * cm * px)), 1024)
+            g = (np.arange(T) + 0.5) / T
+            gx, gz = np.meshgrid(cx + g * wc, cz + g * dc)   # grid units (cells) at the texel centres
+            ix, iz = np.clip(np.floor(gx).astype(int), 0, nx - 1), np.clip(np.floor(gz).astype(int), 0, nz - 1)
+            fx, fz = (gx - ix)[..., None], (gz - iz)[..., None]
+            wt = (w_full[iz, ix] * (1 - fx) + w_full[iz, ix + 1] * fx) * (1 - fz) + \
+                 (w_full[iz + 1, ix] * (1 - fx) + w_full[iz + 1, ix + 1] * fx) * fz   # (T, T, 5)
+            wt /= np.maximum(wt.sum(-1, keepdims=True), 1e-9)
+            wx, wz = x0 + gx * cm, z0 + gz * cm   # world metres
+            out = {k: np.zeros((T, T, 4)) for k in lp2mesh.KINDS}
+            for k in range(LAYERS):
+                if wt[..., k].max() <= 0:
+                    continue
+                mname, tile = lays[k]
+                if (mname, tile) not in imgs:
+                    imgs[(mname, tile)] = _layer_images(project, mname, tile, px)
+                for kind, im in imgs[(mname, tile)].items():
+                    out[kind] += _wrap_sample(im, wx / tile, wz / tile) * wt[..., k:k + 1]
+            nm = out["nm"][..., :3] / 127.5 - 1.0   # blended normals: unit length again
+            nm /= np.maximum(np.linalg.norm(nm, axis=-1, keepdims=True), 1e-6)
+            out["nm"][..., :3] = (nm + 1.0) * 127.5
+            name = f"terrain_bake_{t['id']}_{cx // per}_{cz // per}"
+            d = lp2mesh.mat_dir(project, name)
+            os.makedirs(d, exist_ok=True)
+            for kind in lp2mesh.KINDS:
+                Image.fromarray(np.clip(out[kind] + 0.5, 0, 255).astype(np.uint8)).save(os.path.join(d, kind + ".png"))
+            lp2mesh.save_material(project, name, {"bm": "bm.png", "nm": "nm.png", "mm": "mm.png", "colour": [1, 1, 1], "size": T})
+            part = grid_mesh(t, H, cells, 1.0, 0)
+            P = part["P"]   # UVs 0..1 across the chunk
+            part["U"] = np.stack([(P[:, 0] - (x0 + cx * cm)) / (wc * cm), (P[:, 2] - (z0 + cz * cm)) / (dc * cm)], -1)
+            part["mat"] = f"chunk{cx // per}_{cz // per}"
+            parts.append(part)
+            slots[part["mat"]] = name
+    log(f"  terrain {t.get('name') or t['id']}: smooth blend baked, {len(parts)} chunk(s) of up to {per} cells at {px:g} px/m")
+    return parts, slots
 
 
 def layer(t, k):
@@ -124,19 +236,24 @@ def build(game, project, t, log=print):
     tid = t["id"]
     d = os.path.join(project, "terrain", tid)
     H, W, O = grids(project, t)
-    L = cell_layers(W)
+    E = effective(t, H, W)
+    L = cell_layers(E)
     used = [k for k in range(LAYERS) if (~O & (L == k)).any()]
     if not used:
         raise SystemExit(f"terrain {t.get('name') or tid}: every cell is a hole")
-    mats = {k: material(project, t, k) for k in used}
+    mats = {k: material(project, t, k) for k in (range(LAYERS) if t.get("blend") else used)}
     key = build_key(project, t, [m for m, _ in mats.values()])
     kp = os.path.join(d, "build.key")
     if os.path.exists(kp) and open(kp).read() == key and os.path.exists(os.path.join(d, "project.json")):
         return json.load(open(os.path.join(d, "import.json")))
     os.makedirs(d, exist_ok=True)
-    json.dump({"source": f"terrain {tid}", "collision": "mesh", "scale": 100.0,
-               "slots": {f"layer{k}": mats[k][0] for k in used}}, open(os.path.join(d, "import.json"), "w"), indent=1)
-    parts = [grid_mesh(t, H, ~O & (L == k), mats[k][1], k) for k in used]
+    if t.get("blend"):
+        parts, slots = bake_parts(project, t, H, E, O, log)
+    else:
+        parts = [grid_mesh(t, H, ~O & (L == k), mats[k][1], k) for k in used]
+        slots = {f"layer{k}": mats[k][0] for k in used}
+    json.dump({"source": f"terrain {tid}", "collision": "mesh", "scale": 100.0, "slots": slots},
+              open(os.path.join(d, "import.json"), "w"), indent=1)
     cfg = lp2mesh.build_import(game, project, t.get("name") or tid, log, d=d, mesh=(parts, {}))
     open(kp, "w").write(key)
     return cfg

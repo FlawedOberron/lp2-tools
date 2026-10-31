@@ -594,3 +594,16 @@ havok mesh like the collision, plus other maps' pieces' tama). Fixed: other maps
   height + paint, so painted shapes join the edge; off-grid brush point = the ray on the nearest edge's level
   (_brush_point). Tested: +x stroke 40 -> 49 cells, only brushed cells ground, undo restores. _bounds y range cached
   (node meta y_range; update_marker clears, height strokes widen, stroke end clears).
+
+## 2026-10-31: terrain painting by slope + smooth blend BUILT (editor-tested + exported, NOT in game)
+- Edit mode greys other terrains like level geometry (no longer hides them).
+- Slope rules: a paint layer's `"slope": {on, min, max, soft}` (degrees; toolbar row "Auto by slope", per layer).
+  Rule weight = ramp in over soft below min, out over soft above max; effective = max(painted, rule*255), scaled so
+  the total is <= 255 (base gets the rest). Slope = central differences (one-sided at edges); editor _effective and
+  lp2terrain.effective (np.gradient) match. Height strokes refresh the layer map when rules exist.
+- Paint mode (inspector): "Sharp (per cell)" = one material per cell (dominant layer, as before), or
+  "Smooth blend (baked)" (`blend: true`, `bake_px` px/m, default 16). Editor shader blends from an RGBA8 weight map.
+  Export bakes chunks of 1024 // (px * cell_m) cells into project materials `terrain_bake_<id>_<cx>_<cz>`
+  (bm / nm / mm, power-of-two up to 1024, normals renormalised), UVs 0..1 per chunk. Inspector shows a MB estimate.
+- Tested: --terrain-test (slope ring around a hill, soft edges), lp2terrain build on tproj (sharp + rule, blend
+  1024^2 chunk in 4.5 s), full lp2mapc export of the Battlegrounds copy in blend mode.
