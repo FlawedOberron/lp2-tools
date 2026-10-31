@@ -566,3 +566,26 @@ havok mesh like the collision, plus other maps' pieces' tama). Fixed: other maps
 - Not yet: View collision (lp2colview) and the lighting-bake preview don't include terrain; holes; layers.
 - NEXT (step 2): Edit button (lock + grey others, terrain-only), toolbar, brush (size / strength / falloff, pen
   pressure toggles), height raise / lower + smooth, per-stroke undo.
+
+## 2026-10-31: terrain steps 2-4 BUILT (edit mode, brushes, paint / fill, holes; editor-tested + exported, NOT in game)
+- Inspector "Edit terrain": other markers hidden, level geometry greyed (material_overlay), gizmo off, selection
+  locked (picking anything else in the outliner leaves; Delete / Ctrl+D / Ctrl+G / End blocked); Esc or Done leaves.
+  Undo / redo stay in edit mode (resume_after_restore: the rebuilt node is picked up again).
+- Toolbar (CanvasLayer, top centre): 1 Height (Shift lowers, Ctrl flattens to the stroke's start height), 2 Smooth,
+  3 Paint (layer + its material + tile; Shift erases to base), 4 Fill (click = flood fill of the touching cells with
+  the same layer; Fill by slope lo-hi deg), 5 Holes (Shift fills back; holes show red while the tool is on). Size (m,
+  [ ] keys), Strength, Falloff (inner ring = hard core), Pen checkboxes for size / strength (pressure only once a pen
+  reports 0<p<1, so a mouse is full strength). One undo step per stroke. Brush rings follow the ground.
+- Data: weights terrain/<id>.w8 (4 B per point, layers 1-4; base = rest), holes terrain/<id>.hole (1 B per cell);
+  project "layers" [{material, tile}]. Each cell = its strongest layer over its 4 corners (ties: lower), editor shader
+  and lp2terrain.cell_layers alike; export: one part per layer's cells, holes left out (no ground / collision).
+  Layers without a material = blockout grid in LAYER_COLOURS / BLOCKOUT_COLOURS (terrain_blockout_<k>).
+- Editor internals: 32x32-cell chunk meshes (strokes rebuild only theirs), shader with 5 layer samplers + an R8 cell
+  layer map (255 = hole), own ray-heightfield march (ray_ground) for the brush, pick shape rebuilt at stroke end.
+  Packed arrays are shared by reference: _detach() copies a terrain's grids after each undo push before in-place edits.
+- Tested (--terrain-test): edit lock, height / smooth / paint / slope fill / holes strokes via the input path, undo of
+  a holes stroke, save of .w8 / .hole; export: 2 layers -> 2 materials, holes out of ground + collision + physics.
+- Known: textures are projected straight down (cliffs stretch); a single raised point ties its cells (base wins);
+  pen pressure untested with a real tablet; View collision / bake preview still don't show terrain.
+- Next candidates: triplanar UVs for cliffs (export too), baked smooth-blend export mode, ground types per layer
+  (needs the collision flag decode), terrain in View collision.
