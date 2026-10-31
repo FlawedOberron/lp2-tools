@@ -5,6 +5,7 @@
   lp2mesh.py rebuild --game LP2_DIR PROJECT NAME [--collision ...] [--scale S] [--mat SRC=MAT ...]
   lp2mesh.py material --game LP2_DIR PROJECT NAME [--bm IMG] [--nm IMG] [--mm IMG] [--colour R,G,B] [--size N]
                        [--grid M] [--blockout]
+  lp2mesh.py import ... --split                 one piece per Blender object (see "Split" below)
   lp2mesh.py delete PROJECT NAME
   lp2mesh.py list PROJECT                        imports and materials as JSON
 
@@ -24,6 +25,15 @@ No normal map = flat; no mask map = black (lp2stage.py's defaults for LP1 materi
 piece's own space (each face takes the axis plane it faces most; a scaled piece stretches it).
 --blockout: the colour map becomes a generated blockout grid (blockout_image: one tile = 1 m, white lines every
 metre / 25 cm / 12.5 cm on the material's colour, default orange) and "grid" 1 unless one is set.
+
+Split (--split, NAME = the set): one import per drawn object, imports/<set>_<object>/ (object = Blender's name
+without .001), sharing the source in imports/<set>/source/ with imports/<set>/group.json {source, from, members,
+layout: [{piece, M: 16 floats, editor metres, row-major}], pivot: the set's bottom centre (metres)}. A piece's
+vertices are in its object's own space (glTF: the node's origin / rotation / scale; OBJ, which bakes them: origin at
+the object's bottom centre), so it places like the object; the layout puts every object back where it was (the
+editor's Place set). glTF objects sharing a mesh (Alt+D linked duplicates) of one name are one piece placed several
+times; other repeats of a name become <object>_2... COL_<object> goes with its object's piece.
+A re-import keeps imports of objects no longer in the file ("missing": true, not rebuilt).
 
 Space: glTF and Blender's OBJ export (Y up) match LP2's axes; positions are metres * --scale (100: cm).
 Vertex colours (glTF COLOR_0, OBJ "v x y z r g b") tint the baked light, which is otherwise lp2props.py's top light.
@@ -247,7 +257,8 @@ def read_gltf(path):
                 U = accessor(at["TEXCOORD_0"]) if "TEXCOORD_0" in at else None
                 C = accessor(at["COLOR_0"])[:, :3] if "COLOR_0" in at else None
                 mi = pr.get("material")
-                parts.append(dict(obj=n.get("name", ""), mat=names[mi] if mi is not None else "", P=P, N=N, U=U, C=C, T=T))
+                parts.append(dict(obj=n.get("name", ""), mat=names[mi] if mi is not None else "", P=P, N=N, U=U, C=C, T=T,
+                                  node=i, mesh=n["mesh"], M=M))
         for c in n.get("children", []):
             walk(c, M)
 
@@ -413,7 +424,7 @@ def ensure_material(project, name, src):
 def material_users(project, name):
     out = []
     for imp in list_imports(project):
-        if name in imp.get("slots", {}).values():
+        if name in imp.get("slots", {}).values() and not imp.get("missing"):   # missing: its object left the file
             out.append(imp["name"])
     return out
 
@@ -440,13 +451,83 @@ def box_tris(lo, hi):
     return c, np.array([t for a, b, cc, d in quads for t in ((a, b, cc), (a, cc, d))], np.int64)
 
 
+_read_cache = {}
+
+
+def read_mesh_cached(path):
+    k = (path, os.path.getmtime(path))
+    if k not in _read_cache:
+        _read_cache.clear()
+        _read_cache[k] = read_mesh(path)
+    return _read_cache[k]
+
+
+def split_objects(parts):
+    """drawn objects -> {piece key: dict(parts in object space, M: object -> file space, instances: [M...])};
+    COL_ parts go to their object's piece (in its space)"""
+    pieces, order, by_node = {}, [], {}
+    for p in parts:
+        if is_col(p.get("obj", "")) or not len(p["T"]):
+            continue
+        node = p.get("node", p.get("obj", ""))
+        by_node.setdefault(node, []).append(p)
+    for node, ps in by_node.items():
+        base = slug(obj_key(ps[0].get("obj", "")) or "mesh", 24)
+        M = ps[0].get("M")
+        if M is None:   # OBJ: world-space vertices; the pivot = the object's bottom centre
+            allp = np.concatenate([p["P"] for p in ps])
+            lo, hi = allp.min(0), allp.max(0)
+            M = np.eye(4)
+            M[:3, 3] = [(lo[0] + hi[0]) / 2, lo[1], (lo[2] + hi[2]) / 2]
+        key, k = base, 1
+        while key in pieces:
+            q = pieces[key]
+            if ps[0].get("mesh") is not None and q["mesh"] == ps[0].get("mesh"):
+                break   # a linked duplicate: the same piece again
+            k += 1
+            key = f"{base}_{k}"
+        if key in pieces:
+            pieces[key]["instances"].append(M)
+            continue
+        pieces[key] = dict(parts=[to_local(p, M) for p in ps], M=M, mesh=ps[0].get("mesh"), instances=[M],
+                           name=obj_key(ps[0].get("obj", "")))
+        order.append(key)
+    for p in parts:
+        if is_col(p.get("obj", "")) and len(p["T"]):
+            want = obj_key(p["obj"][4:])
+            for key in order:
+                if pieces[key]["name"] == want:
+                    pieces[key]["parts"].append(to_local(p, pieces[key]["M"]))
+                    break
+    return {k: pieces[k] for k in order}
+
+
+def to_local(p, M):
+    A = M[:3, :3]
+    q = dict(p)
+    q["P"] = (p["P"] - M[:3, 3]) @ np.linalg.inv(A).T
+    if p["N"] is not None:
+        q["N"] = p["N"] @ A
+    if np.linalg.det(A) < 0:   # the reader flipped the winding for a mirrored node; its own space isn't mirrored
+        q["T"] = p["T"][:, ::-1]
+    return q
+
+
 def build_import(game, project, name, log=print, d=None, mesh=None):
     """d: the piece's folder (default imports/<name>); mesh: (parts, file materials) made in code (lp2terrain.py)
     instead of reading import.json's source file"""
     d = d or imp_dir(project, name)
     cfg = json.load(open(os.path.join(d, "import.json")))
     progress(0.05, "reading " + cfg["source"])
-    parts, fmats = mesh or read_mesh(os.path.join(d, "source", cfg["source"]))
+    if mesh:
+        parts, fmats = mesh
+    else:
+        parts, fmats = read_mesh_cached(os.path.normpath(os.path.join(d, cfg.get("source_dir", "source"), cfg["source"])))
+        if cfg.get("object"):
+            sp = split_objects(parts).get(cfg["object"])
+            if sp is None:
+                raise SystemExit(f"{cfg['source']}: no object {cfg['object']} any more")
+            parts = sp["parts"]
     parts = [p for p in parts if len(p["T"])]
     # Blender objects named COL_<name>: collision only (for <name>, which then isn't collision itself)
     cols = [p for p in parts if is_col(p.get("obj", ""))]
@@ -572,19 +653,94 @@ def parse_mats(items):
     return out
 
 
-def cmd_import(a):
-    src = os.path.abspath(a.file)
-    name = slug(a.name or os.path.splitext(os.path.basename(src))[0], 32)
-    d = imp_dir(a.project, name)
-    if os.path.exists(os.path.join(d, "import.json")) and not a.replace:
-        raise SystemExit(f"an import named {name} exists (pick another name, or --replace)")
-    sd = os.path.join(d, "source")
+def copy_source(src, sd):
     if os.path.isdir(sd):
         shutil.rmtree(sd)
     for rel in source_files(src):
         dst = os.path.join(sd, rel)
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         shutil.copyfile(os.path.join(os.path.dirname(src), rel), dst)
+
+
+def group_path(project, name):
+    return os.path.join(imp_dir(project, name), "group.json")
+
+
+def import_split(a, src, name):
+    d = imp_dir(a.project, name)
+    if os.path.exists(os.path.join(d, "import.json")):
+        raise SystemExit(f"an import named {name} exists (pick another name)")
+    gp = group_path(a.project, name)
+    old = json.load(open(gp)) if os.path.exists(gp) else None
+    if old and not a.replace:
+        raise SystemExit(f"a set named {name} exists (pick another name, or --replace)")
+    copy_source(src, os.path.join(d, "source"))
+    parts, fmats = read_mesh(os.path.join(d, "source", os.path.basename(src)))
+    pieces = split_objects(parts)
+    if not pieces:
+        raise SystemExit(f"{os.path.basename(src)}: no drawn objects")
+    scale = a.scale if a.scale is not None else 100.0
+    old_members = dict(old.get("objects", {})) if old else {}   # object key -> import name
+    taken = {x["name"] for x in list_imports(a.project)} - set(old_members.values())
+    objects, layout, built = {}, [], []
+    for key, pc in pieces.items():
+        iname = old_members.get(key)
+        if not iname:
+            iname = base = slug(f"{name}_{key}", 32)
+            k = 2
+            while iname in taken:
+                iname = slug(base, 29) + f"_{k}"
+                k += 1
+        taken.add(iname)
+        objects[key] = iname
+        md = imp_dir(a.project, iname)
+        os.makedirs(md, exist_ok=True)
+        cp = os.path.join(md, "import.json")
+        cfg = json.load(open(cp)) if os.path.exists(cp) else {"slots": {}}
+        cfg.pop("missing", None)
+        cfg.update({"source": os.path.basename(src), "source_dir": f"../{name}/source", "from": src, "group": name,
+                    "object": key, "scale": scale})
+        if a.collision or "collision" not in cfg:
+            cfg["collision"] = a.collision or "mesh"
+        for s_, m in parse_mats(a.mat).items():
+            cfg["slots"][s_] = slug(m)
+        json.dump(cfg, open(cp, "w"), indent=1)
+        for M in pc["instances"]:
+            Ms = np.array(M, np.float64)
+            Ms[:3, 3] *= scale / 100.0
+            layout.append(dict(piece=iname, M=[round(float(x), 6) for x in Ms.reshape(-1)]))
+    for i, (key, iname) in enumerate(objects.items()):
+        progress(0.0, f"object {i + 1} / {len(objects)}: {key}")
+        built.append(dict(build_import(a.game, a.project, iname, log=lambda *_: None), name=iname))
+    gone = [v for k, v in old_members.items() if k not in objects]
+    for iname in gone:   # kept (they may be placed), not rebuilt
+        cp = os.path.join(imp_dir(a.project, iname), "import.json")
+        if os.path.exists(cp):
+            cfg = json.load(open(cp))
+            cfg["missing"] = True
+            json.dump(cfg, open(cp, "w"), indent=1)
+            objects[next(k for k, v in old_members.items() if v == iname)] = iname
+    allp = np.concatenate([(p["P"] * scale / 100.0) for p in parts if len(p["T"]) and not is_col(p.get("obj", ""))])
+    lo, hi = allp.min(0), allp.max(0)
+    json.dump({"source": os.path.basename(src), "from": src, "objects": objects, "layout": layout,
+               "pivot": [round(float((lo[0] + hi[0]) / 2), 4), round(float(lo[1]), 4), round(float((lo[2] + hi[2]) / 2), 4)]},
+              open(gp, "w"), indent=1)
+    print(f"{name}: {len(built)} objects -> imports {', '.join(b['name'] for b in built)}; {len(layout)} placements"
+          + (f"; no longer in the file (kept): {', '.join(gone)}" if gone else ""))
+    print("@result " + json.dumps(dict(name=name, split=True, members=[b["name"] for b in built], gone=gone)))
+
+
+def cmd_import(a):
+    src = os.path.abspath(a.file)
+    name = slug(a.name or os.path.splitext(os.path.basename(src))[0], 32)
+    if a.split:
+        return import_split(a, src, name)
+    d = imp_dir(a.project, name)
+    if os.path.exists(group_path(a.project, name)):
+        raise SystemExit(f"a set named {name} exists (pick another name)")
+    if os.path.exists(os.path.join(d, "import.json")) and not a.replace:
+        raise SystemExit(f"an import named {name} exists (pick another name, or --replace)")
+    copy_source(src, os.path.join(d, "source"))
     cfg = {"source": os.path.basename(src), "from": src, "collision": a.collision or "mesh",
            "scale": a.scale if a.scale is not None else 100.0, "slots": {}}
     for s, m in parse_mats(a.mat).items():
@@ -652,7 +808,18 @@ def cmd_delete(a):
     d = imp_dir(a.project, a.name)
     if not os.path.exists(os.path.join(d, "import.json")):
         raise SystemExit(f"no import {a.name}")
+    cfg = json.load(open(os.path.join(d, "import.json")))
     shutil.rmtree(d)
+    g = cfg.get("group")
+    gp = group_path(a.project, g) if g else ""
+    if gp and os.path.exists(gp):   # a set's member: drop it from the set; the last one takes the shared source
+        G = json.load(open(gp))
+        G["objects"] = {k: v for k, v in G.get("objects", {}).items() if v != a.name}
+        G["layout"] = [x for x in G.get("layout", []) if x["piece"] != a.name]
+        if G["objects"]:
+            json.dump(G, open(gp, "w"), indent=1)
+        else:
+            shutil.rmtree(imp_dir(a.project, g))
     print(f"deleted import {a.name}")
 
 
@@ -677,6 +844,7 @@ def main():
         if c == "import":
             s.add_argument("--name")
             s.add_argument("--replace", action="store_true")
+            s.add_argument("--split", action="store_true", help="one piece per Blender object (NAME = the set)")
         s.add_argument("--collision", choices=["mesh", "box", "none"])
         s.add_argument("--scale", type=float)
         s.add_argument("--mat", action="append", help="SRC=MAT: the file's material SRC uses project material MAT")

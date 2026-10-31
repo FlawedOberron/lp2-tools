@@ -607,3 +607,14 @@ havok mesh like the collision, plus other maps' pieces' tama). Fixed: other maps
   (bm / nm / mm, power-of-two up to 1024, normals renormalised), UVs 0..1 per chunk. Inspector shows a MB estimate.
 - Tested: --terrain-test (slope ring around a hill, soft edges), lp2terrain build on tproj (sharp + rule, blend
   1024^2 chunk in 4.5 s), full lp2mapc export of the Battlegrounds copy in blend mode.
+
+## 2026-10-31: Blender multi-object import (split by object) BUILT (editor-tested, NOT in game)
+- lp2mesh.py import --split: one import per drawn object, imports/<set>_<object>/ ("group", "object",
+  "source_dir": ../<set>/source), shared source + imports/<set>/group.json {objects: key -> import, layout: [{piece,
+  M}], pivot}. Pieces are in their object's own space (glTF node origin / rotation / scale; OBJ: bottom centre),
+  glTF linked duplicates (same mesh, same name) = one piece placed several times; other same-name objects get _2...;
+  COL_<object> joins its piece. Re-import keeps per-object collision / slots, marks vanished objects "missing"
+  (kept, not rebuilt); deleting the last member removes the set folder.
+- Editor mesh builder: "Split by object" check, "Place set" (layout -> pieces via add_piece, one group at the view
+  point), Re-import of a member re-imports the set. Test: --set-test (scratch glb: rotated linked duplicate, scaled
+  pillar + COL_, same-name other mesh) -> positions / rotations as in the file.
