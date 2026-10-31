@@ -646,3 +646,56 @@ havok mesh like the collision, plus other maps' pieces' tama). Fixed: other maps
   ScriptVolumeOn(sid). Pulse chains cut at 200 nodes.
 - Next: buttons (interact prompt hook) and movers (doors / lifts: movable collision) need RE of the campaign's
   networked gimmicks; host-authoritative events then (our transport); on-screen messages.
+
+## 2026-10-31 (later): create-match thumbnails traced; scripts host-authoritative (DLL built + installed, NOT in game)
+- Thumbnails: the archive side works (g1_abattleplayercreate.arc gains ID221_SC14/15_ID; Battlegrounds / CrossfireCity
+  zips carry thumbnail.rTexture; Area921 / BattlegroundsBoss have none -> base map's picture). The live rebind swap
+  (mappics.cpp) failed in the 10-31 DX11 run: "picture: no resource manager found". Static addresses verified against
+  the shipped LP2DX11.exe (sResource [0x18d0ccc], vtable 0x16e0df8 slot 11 = 0x49fe10; DX9 vtable 0x16d0d70).
+  Manager() now also accepts the vtable itself and logs the raw values once on failure ("manager at .. = .., vtable
+  .. (want ..), vf11 .. (want ..)"): read that line after the next create-match scroll.
+- Scripts: host-authoritative. In a lobby only the owner runs the graph; it publishes member data "script" =
+  "<graph hash %08x>:<hex bits of volume on/off>"; others follow (sync thread 10/s, ignore other maps' keys, start
+  state until the host's arrives). Offline = local as before. Wine-tested (sctest: stubs.cpp fakes Steam).
+- On-screen messages: uBattleMessage (DX9 vf3 008a2400) has no simple public "show" entry (nearby functions have
+  1-3 callers); needs tracing its message queue (fed by network events). Then message ids served via maps.cpp's
+  MsgOnline hook (RulesMessage pattern).
+- Next for scripting: buttons (interact prompt), movers (doors / lifts), messages: RE of campaign gimmicks.
+
+## 2026-10-31 (late): scripting nodes + client triggers BUILT (editor-tested, DLL wine-tested, NOT in game)
+- Variables are numbers (on / off = 1 / 0), made by name; value fields take a number or a variable's name.
+  New nodes: Random value (from..to, whole numbers), Math (+ - * / min max mod), Compare (== != < <= > >= -> yes /
+  no), Set volume value (volume, setting, value, fade s); Set takes number / variable / on / off / toggle; Timer and
+  Delay "Up to (s)" = random time between; Log "{name}" shows a variable.
+- map.json: nodes' "a" / "b" = number or {"var": i}, "op", "setting", "max_seconds", "integer", "toggle";
+  script "var_names". Settings (packages.h ScriptSetting): gravity, damage_player, damage_vs, brightness,
+  saturation, contrast, tint_r/g/b; modules read them through ScriptValue(sid, setting, base) (fades included).
+  Fog isn't a volume setting (the map's fog is the game's): later, with fog volumes.
+- Network (scripts.cpp, Steam messages channel 0x10002, reliable): a player's machine reports its own character's
+  enter / leave (RulesSlotOf / RulesLocalSlot, rules.cpp) to the host; the host skips remote players' characters,
+  runs the graph, sends state {volume on/off, set values with elapsed fade} on change + every 2 s. Member data
+  "script" no longer used. Tests: sctest/test2.cpp (nodes), sctest/parse.cpp (packages.cpp parse block).
+## Particles: research started
+- Stock placed effects: rFieldSet (tool\SceneBox\<area>.rFieldSet; xfsedit parses / writes) mFieldSet[].mpArray
+  entries {mpEffect rEffectList path, mPosition vec4, mAngle vec4, mGroupFlag, mLoopFrame, mVanishType,
+  mWindUpdateInterval}; lp2clean.fieldset empties them now. Effect lists + what they name: lp2weather.resources
+  pattern (follow names through the stock arc).
+- Runtime emitter: uEffectEmitter (DX9 dti 018d0ee0, size 0xe0): Resource (rEffectList), mEmitFlag +0x24,
+  mControlFlag +0x2c, mPlaySpeed +0x68, mParticleScale +0x70, mParticle3DScale +0x80, mGeneratorScale +0x90
+  (rate?), mLoopFrame / mLifeFrame / mWaitFrame. uPlanetEffectEmitter (0xf0) derives. sEffect (0x260) the manager.
+- Plan: (1) catalog stock rEffectLists (per map arc, names) for an editor picker; (2) editor "Particle emitter"
+  object (effect, rate, scale, speed, starts off, id); (3) compiler packs the lists + deps, writes rFieldSet
+  entries (always-on) OR the DLL spawns uEffectEmitter units itself from map.json (then it holds them: on / off /
+  rate / scale from scripts). Decide after finding the game's "spawn effect at position" call (sEffect).
+
+## Scripts: players, lists, loop (2026-10-31, BUILT, offline-tested only)
+- Variable kinds (compiler infers, "var_kinds"): number / player (match slot, -1 nobody) / list of slots.
+- Nodes: enter stores who (Player field); players (all), list add/remove/clear, listremove (where gone/dead/
+  gone_or_dead/alive/health_below %/teng_below), listget (N from 1 or random; found/none), listcount, foreach,
+  playercheck, playerget (health, health %, full, T-Eng, T-Eng max), playeract (damage, damage %, kill, +/- T-Eng), loop.
+- RE (uCharacterBase "Life & Energy", vf3): DX9 mLifeMax +0x18c4, mLife +0x18c8 (XOR *(*0x18427b0+0x1f58)), mEnergyMax
+  +0x18d0, mEnergy +0x18d4, mAddEnergy +0x18d8; DX11 all +0x10, key ptr 0x1852850. Damage: DX9 0x9a7930 / DX11 0x9b71b0
+  thiscall(ch, bits(dmg) ^ 0x80000000) -> vf138 (life change); verified call sites 0x5a94db / 0x5b8d5b (unpacked exes).
+- Net: players send vitals 4/s to host (msg 3); host broadcasts actions (msg 4), owner applies on its own character update.
+- Requested next: spawn weapon / VS / VS weapon / grenade (with chance), spawn object at position, named script markers.
+  All need RE of the game's unit/item spawn (sUnit create + item pickups); markers are editor+compiler only (easy).
