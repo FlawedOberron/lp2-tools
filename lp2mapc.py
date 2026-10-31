@@ -24,7 +24,7 @@ The package is the base stock map (project base.stock, 0 = Desecration) with eve
                            path-keyed cache never mixes it up with the stock map or another package
 Every file comes from the user's own game install and the project's assets.
 """
-import argparse, hashlib, json, math, os, shutil, struct, subprocess, sys, tempfile, zipfile, zlib
+import argparse, hashlib, json, math, os, re, shutil, struct, subprocess, sys, tempfile, zipfile, zlib
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -220,12 +220,15 @@ SCRIPT_TYPES = {
     "playerget": (("in",), ("then",), ("stat",)),
     "playeract": (("in",), ("then",), ("action",)),
     "loop": (("in",), ("each", "done"), ()),
+    "findmarkers": (("in",), ("found", "none"), ("text",)),
+    "getmarker": (("in",), ("found", "none"), ("text", "random")),
 }
 SCRIPT_VOLUME_NODES = ("enter", "volume", "setvalue")
 # the variables a node names, by field: number ("var"), player ("player"; optional on enter), list ("list")
 SCRIPT_VAR_NODES = ("set", "if", "random", "math", "listcount", "playerget", "loop")
-SCRIPT_PLAYER_NODES = ("enter", "list", "listget", "foreach", "playercheck", "playerget", "playeract")
-SCRIPT_LIST_NODES = ("players", "list", "listremove", "listget", "listcount", "foreach")
+SCRIPT_PLAYER_NODES = ("enter", "list", "listget", "foreach", "playercheck", "playerget", "playeract", "getmarker")
+SCRIPT_LIST_NODES = ("players", "list", "listremove", "listget", "listcount", "foreach", "findmarkers")
+SCRIPT_ITEM_NODES = ("list", "listget", "foreach")   # their "player" is a list entry: a marker for a markers list
 SCRIPT_OPERANDS = {"set": ("a",), "random": ("a", "b"), "math": ("a", "b"), "compare": ("a", "b"), "setvalue": ("a",),
                    "listremove": ("a",), "listget": ("a",), "playercheck": ("a",), "playeract": ("a",),
                    "loop": ("a", "b")}
@@ -276,6 +279,8 @@ def script_manifest(p, log=print):
     index = {n["id"]: i for i, n in enumerate(keep)}
     names = []
     kinds = {}
+    # lists filled by findmarkers hold markers (their entries too); the rest players
+    marker_lists = {script_var_name(n.get("list", "")) or "players" for n in keep if n["type"] == "findmarkers"}
     nodes = []
 
     def ref(n, field, kind, default):
@@ -298,12 +303,15 @@ def script_manifest(p, log=print):
             e["sid"] = sids[n["volume"]]
         if n["type"] in SCRIPT_VAR_NODES:
             e["var"] = ref(n, "var", "number", "var")
+        lname = script_var_name(n.get("list", "")) or "players"
+        of_markers = lname in marker_lists
         if n["type"] in SCRIPT_PLAYER_NODES:
-            v = ref(n, "player", "player", "" if n["type"] == "enter" else "player")
+            marker = n["type"] == "getmarker" or (n["type"] in SCRIPT_ITEM_NODES and of_markers)
+            v = ref(n, "player", "marker" if marker else "player", "" if n["type"] == "enter" else "player")
             if v is not None:
                 e["player"] = v
         if n["type"] in SCRIPT_LIST_NODES:
-            e["list"] = ref(n, "list", "list", "players")
+            e["list"] = ref(n, "list", "markers" if of_markers else "list", "players")
         if n["type"] == "set":
             value = str(n.get("value", "toggle")).strip().lower()
             if value == "toggle":
@@ -324,8 +332,15 @@ def script_manifest(p, log=print):
         if v.get("id") in sids:
             lo, hi = volume_local(v)
             boxes.append(dict(min=lo, max=hi, sid=sids[v["id"]], **({"yaw": volume_yaw(v)} if volume_yaw(v) else {})))
-    log(f"  script: {len(nodes)} node(s), {len(sids)} volume(s), {len(names)} variable(s)")
-    return {"script": {"nodes": nodes, "volumes": len(sids), "start_off": start_off, "vars": len(names),
+    markers = []
+    for v in p.get("volumes", []):
+        if "marker" in v:
+            markers.append({"name": script_var_name(v["marker"]), "pos": list(v["pos"]),
+                            "size": list(v.get("size", [100, 200, 100])), "yaw": volume_yaw(v)})
+    natural = lambda m: [int(t) if t.isdigit() else t for t in re.split(r"(\d+)", m["name"])]
+    markers.sort(key=natural)
+    log(f"  script: {len(nodes)} node(s), {len(sids)} volume(s), {len(names)} variable(s), {len(markers)} marker(s)")
+    return {"script_markers": markers, "script": {"nodes": nodes, "volumes": len(sids), "start_off": start_off, "vars": len(names),
                        "var_names": names, "var_kinds": [kinds.get(x, "number") for x in names]},
             "script_volumes": boxes}
 
