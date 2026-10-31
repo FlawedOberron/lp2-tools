@@ -194,9 +194,83 @@ def no_weather_volumes(p):
                  yaw=volume_yaw(v), amount=max(0.0, min(100.0, float(v.get("weather", 0.0))))) for v in vs]
 
 
+# visual scripting (the editor's scripts.gd): node type -> (input ports, output ports, props kept)
+SCRIPT_TYPES = {
+    "start": ((), ("then",), ()),
+    "enter": ((), ("entered", "left"), ("who",)),
+    "timer": (("start", "stop"), ("tick",), ("seconds", "repeat", "autostart")),
+    "delay": (("in",), ("then",), ("seconds",)),
+    "flipflop": (("in",), ("A", "B"), ()),
+    "counter": (("in", "reset"), ("reached",), ("target",)),
+    "set": (("in",), ("then",), ("value",)),
+    "if": (("in",), ("on", "off"), ()),
+    "volume": (("on", "off", "toggle"), ("then",), ()),
+    "log": (("in",), ("then",), ("text",)),
+}
+
+
+def script_volume_ids(p):
+    """volume id -> script volume number, for the volumes the scripts use"""
+    out = {}
+    ids = {v.get("id") for v in p.get("volumes", []) if v.get("id")}
+    for n in (p.get("scripts") or {}).get("nodes", []):
+        vid = n.get("volume")
+        if n.get("type") in ("enter", "volume") and vid in ids and vid not in out:
+            out[vid] = len(out)
+    return out
+
+
+def script_manifest(p, log=print):
+    """map.json "script" for the xlive mod (scripts.cpp): {nodes: [{type, props, out: {port: [[node, in port]]}}],
+    volumes: count, start_off: [volume numbers], vars: count} and "script_volumes" (every box of a used volume, "sid")"""
+    sids = script_volume_ids(p)
+    src = [n for n in (p.get("scripts") or {}).get("nodes", []) if n.get("type") in SCRIPT_TYPES]
+    keep, dropped = [], []
+    for n in src:
+        if n["type"] in ("enter", "volume") and n.get("volume") not in sids:
+            dropped.append(n["id"])
+        else:
+            keep.append(n)
+    if dropped:
+        log(f"  script: {len(dropped)} node(s) without a volume skipped ({', '.join(dropped)})")
+    if not keep:
+        return {}
+    index = {n["id"]: i for i, n in enumerate(keep)}
+    names = []
+    nodes = []
+    for n in keep:
+        ins, outs, props = SCRIPT_TYPES[n["type"]]
+        e = {"type": n["type"], "out": {}}
+        for k in props:
+            if k in n:
+                e[k] = n[k]
+        if n["type"] in ("enter", "volume"):
+            e["sid"] = sids[n["volume"]]
+        if n["type"] in ("set", "if"):
+            name = str(n.get("var", "")).strip().lower() or "var"
+            if name not in names:
+                names.append(name)
+            e["var"] = names.index(name)
+        nodes.append(e)
+    for a, port, b, inport in (p.get("scripts") or {}).get("links", []):
+        if a in index and b in index and port in SCRIPT_TYPES[keep[index[a]]["type"]][1] \
+                and inport in SCRIPT_TYPES[keep[index[b]]["type"]][0]:
+            nodes[index[a]]["out"].setdefault(port, []).append([index[b], inport])
+    start_off = sorted({sids[n["volume"]] for n in keep if n["type"] == "volume" and n.get("start_off")})
+    boxes = []
+    for v in all_parts(p):
+        if v.get("id") in sids:
+            lo, hi = volume_local(v)
+            boxes.append(dict(min=lo, max=hi, sid=sids[v["id"]], **({"yaw": volume_yaw(v)} if volume_yaw(v) else {})))
+    log(f"  script: {len(nodes)} node(s), {len(sids)} volume(s), {len(names)} variable(s)")
+    return {"script": {"nodes": nodes, "volumes": len(sids), "start_off": start_off, "vars": len(names)},
+            "script_volumes": boxes}
+
+
 def gravity_manifest(p):
     """map.json gravity and screen settings for the xlive mod (gravity.cpp, post.cpp): environment jump_packs /
-    underwater / gravity, gravity volumes, post-process volumes, water volumes (water.cpp: water up to the box's top)"""
+    underwater / gravity, gravity volumes, post-process volumes, water volumes (water.cpp: water up to the box's top),
+    damage volumes (damage.cpp: "damage": {player, vs: % of full health per second; player_kill / vs_kill: at once})"""
     env, out = p.get("environment", {}), {}
     if env.get("jump_packs"):
         out["jump_packs"] = True
@@ -209,11 +283,24 @@ def gravity_manifest(p):
     vols = []
     posts = []
     water = []
+    damage = []
+    sids = script_volume_ids(p)
     for v in all_parts(p):
         lo, hi = volume_local(v)
         turn = {"yaw": volume_yaw(v)} if volume_yaw(v) else {}   # the xlive mod tests the box turned about its centre
+        if v.get("id") in sids:
+            turn["sid"] = sids[v["id"]]   # scripts switch its effects (scripts.cpp)
         if v.get("water"):
             water.append(dict(min=lo, max=hi, **turn))
+        if v.get("damage"):
+            q = v["damage"]
+            e = dict(min=lo, max=hi, player=max(0.0, float(q.get("player", 0))), vs=max(0.0, float(q.get("vs", 0))),
+                     **turn)
+            for k in ("player_kill", "vs_kill"):
+                if q.get(k):
+                    e[k] = True
+            if e["player"] or e["vs"] or e.get("player_kill") or e.get("vs_kill"):
+                damage.append(e)
         if volume_gravity(v) is not None:
             vols.append(dict(min=lo, max=hi, gravity=volume_gravity(v), **turn))
         if v.get("post"):
@@ -227,6 +314,8 @@ def gravity_manifest(p):
         out["post_volumes"] = posts
     if water:
         out["water_volumes"] = water
+    if damage:
+        out["damage_volumes"] = damage
     return out
 
 
@@ -693,6 +782,12 @@ def compile_project(game, folder, out_zip, work=None, log=print, library=None):
         log(f"  preload: {len(preload)} VS / weapon archives")
         manifest = dict(name=info["name"], base=0, number=0, size=info["size"], preload=preload)
         manifest.update(gravity_manifest(p))
+        manifest.update(script_manifest(p, log))
+        if p.get("terrains"):   # damage-painted terrain layers: boxes over their cells
+            import lp2terrain
+            tdmg = lp2terrain.damage_volumes(folder, p, log)
+            if tdmg:
+                manifest["damage_volumes"] = manifest.get("damage_volumes", []) + tdmg
         json.dump(manifest, open(os.path.join(pkg, "map.json"), "w"), indent=1)
         th = info.get("thumbnail")
         if th:

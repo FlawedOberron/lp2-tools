@@ -618,3 +618,31 @@ havok mesh like the collision, plus other maps' pieces' tama). Fixed: other maps
 - Editor mesh builder: "Split by object" check, "Place set" (layout -> pieces via add_piece, one group at the view
   point), Re-import of a member re-imports the set. Test: --set-test (scratch glb: rotated linked duplicate, scaled
   pillar + COL_, same-name other mesh) -> positions / rotations as in the file.
+
+## 2026-10-31: damage over time BUILT (volumes + terrain layers; editor-tested, exported, DLL built + installed, NOT in game)
+- Game's own DoT = "slip damage" (fire grenades, campaign area 2-3): DX9 FUN_009a95a0 / DX11 0x9b8e20 thiscall(char, param
+  0-2, attacker 0x14) sets burning (+0xd70 0x4000000, timer +0x1660); tick DX9 FUN_009a93c0 hits by the param every
+  interval through FUN_009a7930 (deaths / kill credit / net as fire). Params: lookup DX9 0x862180 / DX11 0x871820
+  stdcall(char, no) -> 0x14 entry {damage (positive, negated by xorps 0x80000000), radius, duration, interval, off}
+  from Hm 0x1863770 / Vs 0x186233c / Ak 0x185107c tables (filled from a param file at runtime). Only 2 callers (DX9
+  0x9a94bd, 0x9a9625; DX11 0x9b8d3d, 0x9b8ea5): damage.cpp redirects them; param 2 (AREA 2_3) for a character in our
+  volume -> an entry built for it (type byte +0x1f: 1 human, 2 VS, 3 akrid; full health +0x18c4 DX9 / +0x18d4 DX11,
+  health +0x18c8 XOR [0x18427b0]+0x1f58). Per-character update (gravity hook) re-applies burning while inside (0.4 s
+  linger, a hit every 0.25 s); delta units/s (stage +0x14810 mTrueDeltaTime) measured at runtime (logged).
+- Project volume "damage": {player, vs: % full health / s, player_kill, vs_kill} -> map.json damage_volumes. Terrain
+  layer "damage" (toolbar row under Auto by slope; base layer: terrain "damage") -> lp2terrain.damage_volumes: the
+  layer's dominant cells merged into rectangles (ground spread <= 3 m), boxes 1 m under to 1.5 m over. DLL cap 256.
+- To check in game: the burning effect for param 2 (vf 0x52c(2)) and whether area 2-3's param kills credit right,
+  delta units (log line), VS damage scale, players inside a VS. Mesh-face damage waits for the collision flag decode.
+
+## 2026-10-31: visual scripting, first cut BUILT (editor-tested, DLL runtime tested under wine, NOT in game)
+- Editor scripts.gd (K, toolbar "Scripts"): GraphEdit; project "scripts" {nodes [{id, type, pos, props}], links
+  [[from, out, to, in]]}; volumes get "id" (vol<N>) when a node picks one (duplicates drop it). Undo covers scripts.
+  Nodes: start, enter (who any / player / vs; entered / left), timer (seconds, repeat, autostart; start / stop),
+  delay, flipflop, counter, set / if (named on/off variables), volume (on / off / toggle, start_off), log.
+- lp2mapc.script_manifest -> map.json "script" {nodes [{type, props, sid / var, out {port: [[node, in]]}}], volumes,
+  start_off, vars} + "script_volumes" (boxes with sid); effect volumes carry "sid". DLL scripts.cpp: runs on every
+  machine from per-character updates (positions) + time; volume modules (gravity / damage / post / water) ask
+  ScriptVolumeOn(sid). Pulse chains cut at 200 nodes.
+- Next: buttons (interact prompt hook) and movers (doors / lifts: movable collision) need RE of the campaign's
+  networked gimmicks; host-authoritative events then (our transport); on-screen messages.

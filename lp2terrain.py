@@ -259,6 +259,68 @@ def build(game, project, t, log=print):
     return cfg
 
 
+def layer_damage(t, k):
+    """a layer's damage over time ({player, vs, player_kill, vs_kill}, the volumes' "damage"), or None"""
+    q = t.get("damage") if k == 0 else layer(t, k).get("damage")
+    if isinstance(q, dict) and (float(q.get("player", 0)) > 0 or float(q.get("vs", 0)) > 0 or q.get("player_kill") or q.get("vs_kill")):
+        return q
+    return None
+
+
+def damage_volumes(project, p, log=print, spread=300.0, above=150.0, below=100.0, cap=200):
+    """map.json damage_volumes for terrain layers with "damage": the cells where such a layer is the strongest (holes
+    out), merged into rectangles whose ground varies by at most `spread` cm, each a box from `below` cm under its
+    lowest corner to `above` cm over its highest (a character's position is its feet)"""
+    out = []
+    for t in p.get("terrains") or []:
+        ks = [k for k in range(LAYERS) if layer_damage(t, k)]
+        if not ks:
+            continue
+        H, W, O = grids(project, t)
+        L = cell_layers(effective(t, H, W))
+        nz, nx = L.shape
+        cell = float(t["cell"])
+        x0, y0, z0 = (float(v) for v in t["pos"])
+        lo4 = np.minimum(np.minimum(H[:-1, :-1], H[:-1, 1:]), np.minimum(H[1:, :-1], H[1:, 1:]))
+        hi4 = np.maximum(np.maximum(H[:-1, :-1], H[:-1, 1:]), np.maximum(H[1:, :-1], H[1:, 1:]))
+        n0 = len(out)
+        for k in ks:
+            q = layer_damage(t, k)
+            free = ~O & (L == k)
+            for iz in range(nz):
+                ix = 0
+                while ix < nx:
+                    if not free[iz, ix]:
+                        ix += 1
+                        continue
+                    lo, hi = lo4[iz, ix], hi4[iz, ix]
+                    jx = ix + 1   # grow along x
+                    while jx < nx and free[iz, jx] and max(hi, hi4[iz, jx]) - min(lo, lo4[iz, jx]) <= spread:
+                        lo, hi = min(lo, lo4[iz, jx]), max(hi, hi4[iz, jx])
+                        jx += 1
+                    jz = iz + 1   # then down whole rows
+                    while jz < nz and free[jz, ix:jx].all():
+                        l2, h2 = min(lo, lo4[jz, ix:jx].min()), max(hi, hi4[jz, ix:jx].max())
+                        if h2 - l2 > spread:
+                            break
+                        lo, hi = l2, h2
+                        jz += 1
+                    free[iz:jz, ix:jx] = False
+                    e = dict(min=[round(float(x), 1) for x in (x0 + ix * cell, y0 + lo - below, z0 + iz * cell)],
+                             max=[round(float(x), 1) for x in (x0 + jx * cell, y0 + hi + above, z0 + jz * cell)],
+                             player=float(q.get("player", 0)), vs=float(q.get("vs", 0)))
+                    for f in ("player_kill", "vs_kill"):
+                        if q.get(f):
+                            e[f] = True
+                    out.append(e)
+                    ix = jx
+        log(f"  terrain {t.get('name') or t['id']}: {len(out) - n0} damage box(es)")
+    if len(out) > cap:
+        log(f"  WARNING: {len(out)} terrain damage boxes, only the first {cap} kept (larger cells or flatter ground merge better)")
+        out = out[:cap]
+    return out
+
+
 def add_copies(game, project, p, geo, log=print):
     """build the project's terrains and place them in geo (the geometry edits) as copies -> geo"""
     ts = p.get("terrains") or []
