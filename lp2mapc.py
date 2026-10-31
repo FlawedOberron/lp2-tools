@@ -210,10 +210,25 @@ SCRIPT_TYPES = {
     "math": (("in",), ("then",), ("op",)),
     "compare": (("in",), ("yes", "no"), ("op",)),
     "setvalue": (("in",), ("then",), ("setting", "seconds")),
+    "players": (("in",), ("then",), ()),
+    "list": (("add", "remove", "clear"), ("then",), ()),
+    "listremove": (("in",), ("then",), ("check",)),
+    "listget": (("in",), ("found", "none"), ("random",)),
+    "listcount": (("in",), ("then",), ()),
+    "foreach": (("in",), ("each", "done"), ()),
+    "playercheck": (("in",), ("yes", "no"), ("check",)),
+    "playerget": (("in",), ("then",), ("stat",)),
+    "playeract": (("in",), ("then",), ("action",)),
+    "loop": (("in",), ("each", "done"), ()),
 }
 SCRIPT_VOLUME_NODES = ("enter", "volume", "setvalue")
-SCRIPT_VAR_NODES = ("set", "if", "random", "math")
-SCRIPT_OPERANDS = {"set": ("a",), "random": ("a", "b"), "math": ("a", "b"), "compare": ("a", "b"), "setvalue": ("a",)}
+# the variables a node names, by field: number ("var"), player ("player"; optional on enter), list ("list")
+SCRIPT_VAR_NODES = ("set", "if", "random", "math", "listcount", "playerget", "loop")
+SCRIPT_PLAYER_NODES = ("enter", "list", "listget", "foreach", "playercheck", "playerget", "playeract")
+SCRIPT_LIST_NODES = ("players", "list", "listremove", "listget", "listcount", "foreach")
+SCRIPT_OPERANDS = {"set": ("a",), "random": ("a", "b"), "math": ("a", "b"), "compare": ("a", "b"), "setvalue": ("a",),
+                   "listremove": ("a",), "listget": ("a",), "playercheck": ("a",), "playeract": ("a",),
+                   "loop": ("a", "b")}
 
 
 def script_volume_ids(p):
@@ -260,7 +275,19 @@ def script_manifest(p, log=print):
         return {}
     index = {n["id"]: i for i, n in enumerate(keep)}
     names = []
+    kinds = {}
     nodes = []
+
+    def ref(n, field, kind, default):
+        name = script_var_name(n.get(field, "")) or default
+        if not name:
+            return None
+        if name not in names:
+            names.append(name)
+        if kinds.setdefault(name, kind) != kind:
+            log(f"  script: variable \"{name}\" used as a {kinds[name]} and a {kind} ({n['id']})")
+        return names.index(name)
+
     for n in keep:
         ins, outs, props = SCRIPT_TYPES[n["type"]]
         e = {"type": n["type"], "out": {}}
@@ -270,10 +297,13 @@ def script_manifest(p, log=print):
         if n["type"] in SCRIPT_VOLUME_NODES:
             e["sid"] = sids[n["volume"]]
         if n["type"] in SCRIPT_VAR_NODES:
-            name = script_var_name(n.get("var", "")) or "var"
-            if name not in names:
-                names.append(name)
-            e["var"] = names.index(name)
+            e["var"] = ref(n, "var", "number", "var")
+        if n["type"] in SCRIPT_PLAYER_NODES:
+            v = ref(n, "player", "player", "" if n["type"] == "enter" else "player")
+            if v is not None:
+                e["player"] = v
+        if n["type"] in SCRIPT_LIST_NODES:
+            e["list"] = ref(n, "list", "list", "players")
         if n["type"] == "set":
             value = str(n.get("value", "toggle")).strip().lower()
             if value == "toggle":
@@ -296,7 +326,7 @@ def script_manifest(p, log=print):
             boxes.append(dict(min=lo, max=hi, sid=sids[v["id"]], **({"yaw": volume_yaw(v)} if volume_yaw(v) else {})))
     log(f"  script: {len(nodes)} node(s), {len(sids)} volume(s), {len(names)} variable(s)")
     return {"script": {"nodes": nodes, "volumes": len(sids), "start_off": start_off, "vars": len(names),
-                       "var_names": names},
+                       "var_names": names, "var_kinds": [kinds.get(x, "number") for x in names]},
             "script_volumes": boxes}
 
 
