@@ -198,15 +198,22 @@ def no_weather_volumes(p):
 SCRIPT_TYPES = {
     "start": ((), ("then",), ()),
     "enter": ((), ("entered", "left"), ("who",)),
-    "timer": (("start", "stop"), ("tick",), ("seconds", "repeat", "autostart")),
-    "delay": (("in",), ("then",), ("seconds",)),
+    "timer": (("start", "stop"), ("tick",), ("seconds", "max_seconds", "repeat", "autostart")),
+    "delay": (("in",), ("then",), ("seconds", "max_seconds")),
     "flipflop": (("in",), ("A", "B"), ()),
     "counter": (("in", "reset"), ("reached",), ("target",)),
-    "set": (("in",), ("then",), ("value",)),
+    "set": (("in",), ("then",), ()),
     "if": (("in",), ("on", "off"), ()),
     "volume": (("on", "off", "toggle"), ("then",), ()),
     "log": (("in",), ("then",), ("text",)),
+    "random": (("in",), ("then",), ("integer",)),
+    "math": (("in",), ("then",), ("op",)),
+    "compare": (("in",), ("yes", "no"), ("op",)),
+    "setvalue": (("in",), ("then",), ("setting", "seconds")),
 }
+SCRIPT_VOLUME_NODES = ("enter", "volume", "setvalue")
+SCRIPT_VAR_NODES = ("set", "if", "random", "math")
+SCRIPT_OPERANDS = {"set": ("a",), "random": ("a", "b"), "math": ("a", "b"), "compare": ("a", "b"), "setvalue": ("a",)}
 
 
 def script_volume_ids(p):
@@ -215,19 +222,35 @@ def script_volume_ids(p):
     ids = {v.get("id") for v in p.get("volumes", []) if v.get("id")}
     for n in (p.get("scripts") or {}).get("nodes", []):
         vid = n.get("volume")
-        if n.get("type") in ("enter", "volume") and vid in ids and vid not in out:
+        if n.get("type") in SCRIPT_VOLUME_NODES and vid in ids and vid not in out:
             out[vid] = len(out)
     return out
 
 
+def script_var_name(x):
+    return str(x).strip().lower()
+
+
+def script_operand(x, names):
+    """a node value: a number, else a variable's name -> {"var": index}"""
+    try:
+        return float(x)
+    except (TypeError, ValueError):
+        name = script_var_name(x) or "var"
+        if name not in names:
+            names.append(name)
+        return {"var": names.index(name)}
+
+
 def script_manifest(p, log=print):
-    """map.json "script" for the xlive mod (scripts.cpp): {nodes: [{type, props, out: {port: [[node, in port]]}}],
-    volumes: count, start_off: [volume numbers], vars: count} and "script_volumes" (every box of a used volume, "sid")"""
+    """map.json "script" for the xlive mod (scripts.cpp): {nodes: [{type, props, sid / var, a / b (number or
+    {var}), out: {port: [[node, in port]]}}], volumes: count, start_off: [volume numbers], vars: count, var_names}
+    and "script_volumes" (every box of a used volume, "sid")"""
     sids = script_volume_ids(p)
     src = [n for n in (p.get("scripts") or {}).get("nodes", []) if n.get("type") in SCRIPT_TYPES]
     keep, dropped = [], []
     for n in src:
-        if n["type"] in ("enter", "volume") and n.get("volume") not in sids:
+        if n["type"] in SCRIPT_VOLUME_NODES and n.get("volume") not in sids:
             dropped.append(n["id"])
         else:
             keep.append(n)
@@ -244,13 +267,22 @@ def script_manifest(p, log=print):
         for k in props:
             if k in n:
                 e[k] = n[k]
-        if n["type"] in ("enter", "volume"):
+        if n["type"] in SCRIPT_VOLUME_NODES:
             e["sid"] = sids[n["volume"]]
-        if n["type"] in ("set", "if"):
-            name = str(n.get("var", "")).strip().lower() or "var"
+        if n["type"] in SCRIPT_VAR_NODES:
+            name = script_var_name(n.get("var", "")) or "var"
             if name not in names:
                 names.append(name)
             e["var"] = names.index(name)
+        if n["type"] == "set":
+            value = str(n.get("value", "toggle")).strip().lower()
+            if value == "toggle":
+                e["toggle"] = True
+            else:
+                e["a"] = 1.0 if value == "on" else 0.0 if value == "off" else script_operand(value, names)
+        for k in SCRIPT_OPERANDS.get(n["type"], ()):
+            if n["type"] != "set" and k in n:
+                e[k] = script_operand(n[k], names)
         nodes.append(e)
     for a, port, b, inport in (p.get("scripts") or {}).get("links", []):
         if a in index and b in index and port in SCRIPT_TYPES[keep[index[a]]["type"]][1] \
@@ -263,7 +295,8 @@ def script_manifest(p, log=print):
             lo, hi = volume_local(v)
             boxes.append(dict(min=lo, max=hi, sid=sids[v["id"]], **({"yaw": volume_yaw(v)} if volume_yaw(v) else {})))
     log(f"  script: {len(nodes)} node(s), {len(sids)} volume(s), {len(names)} variable(s)")
-    return {"script": {"nodes": nodes, "volumes": len(sids), "start_off": start_off, "vars": len(names)},
+    return {"script": {"nodes": nodes, "volumes": len(sids), "start_off": start_off, "vars": len(names),
+                       "var_names": names},
             "script_volumes": boxes}
 
 
