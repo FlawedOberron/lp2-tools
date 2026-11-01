@@ -721,3 +721,9 @@ havok mesh like the collision, plus other maps' pieces' tama). Fixed: other maps
   spawner FUN_00f716c0 turns units from a record's rot (degrees x deg2rad; call sites 0xf71805 / 0xf81695): yaw = the
   marker's (records' convention). Untested: the player's control / camera may re-turn the body.
 - FIX: DamageInstall never set g_damage (an edit hadn't applied): script damage / kill would have done nothing. Now set.
+- Vectors (x, y, z, yaw; yaw NaN = no facing: teleport keeps the player's): getpos (player: +0x30, yaw = 2 atan2(q.y, q.w)
+  of +0x40 quat (UNVERIFIED sign vs set angle); marker), vector ops incl. tolocal / fromlocal (marker frame: A->B relative
+  teleport tested offline: A + (50,0,20) -> B yaw 90 = (1020,0,-50) facing 90). Teleport "to": marker | vector ("vec").
+- Flow: switch (cases, 7 outs), sequence, gate (4 ins), once, branch, chance, cooldown. Ports now up to 4 in / 8 out.
+- Asked next: one-way walls (idea: thin volume, per character update compare mOldPos and pos across its plane, push
+  back when crossing the wrong way; bullets / grenades not affected).

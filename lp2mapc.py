@@ -224,7 +224,18 @@ SCRIPT_TYPES = {
     "getmarker": (("in",), ("found", "none"), ("text", "random")),
     "spawn": (("in",), ("spawned", "skipped"), ("kind", "items", "random")),
     "teleport": (("in",), ("moved", "skipped"), ("random", "face")),
+    "getpos": (("in",), ("then", "none"), ()),
+    "vector": (("in",), ("then",), ("vecop",)),
+    "switch": (("in",), ("1", "2", "3", "4", "5", "6", "default"), ("cases",)),
+    "sequence": (("in",), ("1", "2", "3", "4", "5", "6"), ()),
+    "gate": (("in", "open", "close", "toggle"), ("then",), ("autostart",)),
+    "once": (("in", "reset"), ("then",), ()),
+    "branch": (("in",), ("1", "2", "3", "4", "5", "6"), ("target",)),
+    "chance": (("in",), ("yes", "no"), ()),
+    "cooldown": (("in", "reset"), ("then", "blocked"), ("seconds",)),
 }
+SCRIPT_VEC_NUMBER_OPS = ("length", "getx", "gety", "getz", "getyaw")   # vector ops whose result is a number
+SCRIPT_VEC_B_VECTOR = ("add", "sub")                                    # ops whose B is a vector (else a number)
 SCRIPT_VOLUME_NODES = ("enter", "volume", "setvalue")
 # the variables a node names, by field: number ("var"), player ("player"; optional on enter), list ("list")
 SCRIPT_VAR_NODES = ("set", "if", "random", "math", "listcount", "playerget", "loop")
@@ -234,7 +245,8 @@ SCRIPT_LIST_NODES = ("players", "list", "listremove", "listget", "listcount", "f
 SCRIPT_ITEM_NODES = ("list", "listget", "foreach")   # their "player" is a list entry: a marker for a markers list
 SCRIPT_OPERANDS = {"set": ("a",), "random": ("a", "b"), "math": ("a", "b"), "compare": ("a", "b"), "setvalue": ("a",),
                    "listremove": ("a",), "listget": ("a",), "playercheck": ("a",), "playeract": ("a",),
-                   "loop": ("a", "b"), "spawn": ("a",)}
+                   "loop": ("a", "b"), "spawn": ("a",), "vector": ("a", "b"),
+                   "switch": ("a",), "chance": ("a",)}
 
 
 def script_volume_ids(p):
@@ -306,6 +318,25 @@ def script_manifest(p, log=print):
             e["sid"] = sids[n["volume"]]
         if n["type"] in SCRIPT_VAR_NODES:
             e["var"] = ref(n, "var", "number", "var")
+        if n["type"] == "getpos":
+            e["var"] = ref(n, "var", "vector", "pos")
+            e["from"] = "marker" if n.get("from") == "marker" else "player"
+            if e["from"] == "marker":
+                e["marker"] = ref(n, "marker", "marker", "spot")
+            else:
+                e["player"] = ref(n, "player", "player", "player")
+        if n["type"] == "vector":
+            op = n.get("vecop", "add")
+            e["var"] = ref(n, "var", "number" if op in SCRIPT_VEC_NUMBER_OPS else "vector", "pos")
+            for k in ("a", "b"):   # name the operands' kinds (numbers stay numbers)
+                x = n.get(k, "")
+                try:
+                    float(x)
+                except (TypeError, ValueError):
+                    if k == "a" or op in SCRIPT_VEC_B_VECTOR:
+                        ref(n, k, "vector", "pos")
+            if op in ("tolocal", "fromlocal"):
+                e["marker"] = ref(n, "marker", "marker", "spot")
         lname = script_var_name(n.get("list", "")) or "players"
         of_markers = lname in marker_lists
         if n["type"] in SCRIPT_PLAYER_NODES:
@@ -313,8 +344,11 @@ def script_manifest(p, log=print):
             v = ref(n, "player", "marker" if marker else "player", "" if n["type"] == "enter" else "player")
             if v is not None:
                 e["player"] = v
-        if n["type"] == "teleport":   # its "player" is who, "marker" where
-            e["marker"] = ref(n, "marker", "marker", "spot")
+        if n["type"] == "teleport":   # its "player" is who; where: "marker", or a vector ("vec")
+            if n.get("to") == "vector":
+                e["vec"] = ref(n, "vec", "vector", "pos")
+            else:
+                e["marker"] = ref(n, "marker", "marker", "spot")
         if n["type"] in SCRIPT_LIST_NODES:
             e["list"] = ref(n, "list", "markers" if of_markers else "list", "players")
         if n["type"] == "set":
