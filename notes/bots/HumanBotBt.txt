@@ -1,0 +1,350 @@
+#0 Fight attr=512 root=1 next=[1, 3, 6, 7, 8, 10, 12, 23, 26, 28, 29, 24, 36, 48, 49, 51, 16, 67, 75, 78]
+    F FilterTargetExist{"mIsOnlyEnemyExistCheck": 0, "mInverse": 0, "mAndCheck": 1}
+    E EvaluateDefault{"mWeight": 20.0}
+    M MoveShot{"mNoShotAttr": 0}
+#1 RunToDataPost attr=0 root=11 next=[2]
+    M MoveTrace{"mTgtType": 16, "mRadius": 100.0, "mArriveRadius": 100.0, "mCountTimer": 120.0, "mIsPadWalk": 0, "mIsActSelect": 0, "mIsEndTime": 1}
+    M MoveShot{"mNoShotAttr": 0}
+    M MoveDamage{"mDamageLimit": 50.0}
+    M MoveDistance{"mTgtType": 0, "mRadius": 600.0, "mIsOut": 0, "mReturn": 2}
+#2 ExecDataPost attr=1 root=11 next=[]
+    F FilterDistans{"mTgtType": 16, "mRadius": 1500.0, "mIsInner": 1, "mInverse": 0, "mAndCheck": 1}
+    F FilterDistans{"mTgtType": 0, "mRadius": 500.0, "mIsInner": 0, "mInverse": 0, "mAndCheck": 1}
+    E EvaluateDefault{"mWeight": 300.0}
+    E EvaluateDamageRemain{"mIsMinusRemainCheck": 0, "mWeight": -40.0}
+    E EvaluateDataPostOn{"mWeight": 1000.0}
+    M MoveHmAction{"mPadAction": 11}
+    M MoveTime{"mReturn": 1, "mTime": 300, "mIsParamCheck": 0}
+    M MoveDamage{"mDamageLimit": 10.0}
+    M MoveDistance{"mTgtType": 0, "mRadius": 400.0, "mIsOut": 0, "mReturn": 2}
+#3 RunToTarget attr=0 root=1 next=[11]
+    M MoveTrace{"mTgtType": 0, "mRadius": 100.0, "mArriveRadius": 200.0, "mCountTimer": 120.0, "mIsPadWalk": 0, "mIsActSelect": 0, "mIsEndTime": 1}
+    M MoveShot{"mNoShotAttr": 0}
+#4 Strike attr=1 root=1 next=[]
+    F FilterDistans{"mTgtType": 0, "mRadius": 600.0, "mIsInner": 1, "mInverse": 0, "mAndCheck": 1}
+    F FilterCharIsXXX{"mCheckMode": 1, "mCheckChar": 1, "mInverse": 1, "mAndCheck": 1}
+    E EvaluateDistans{"mTgtType": 0, "mRadius": 700.0, "mIsInner": 1, "mIsOnlyHeightCheck": 0, "mWeight": 700.0}
+    E EvaluateMessagePickUp{"mMessageType": 12, "mWeight": 1000.0}
+    E EvaluateAIParam{"mCheckParamMode": 3, "mWeight": 1000.0}
+    M MoveHmAction{"mPadAction": 1}
+    M MoveTime{"mReturn": 1, "mTime": 30, "mIsParamCheck": 0}
+#5 WaitAI-P attr=1 root=1 next=[]
+    F FilterTracePos{"mTgtType": 21, "mInverse": 0, "mAndCheck": 1}
+    E EvaluateDamageRemain{"mIsMinusRemainCheck": 1, "mWeight": 800.0}
+    E EvaluateDangerArea{"mWeight": 1000.0}
+    E EvaluateDistans{"mTgtType": 0, "mRadius": 700.0, "mIsInner": 1, "mIsOnlyHeightCheck": 0, "mWeight": -600.0}
+    E EvaluateDefault{"mWeight": 300.0}
+    E EvaluateDistans{"mTgtType": 1, "mRadius": 1000.0, "mIsInner": 1, "mIsOnlyHeightCheck": 0, "mWeight": 500.0}
+    E EvaluateAIParam{"mCheckParamMode": 4, "mWeight": 100.0}
+    M MoveTime{"mReturn": 1, "mTime": 150, "mIsParamCheck": 0}
+    M MoveHmAction{"mPadAction": 3}
+    M MoveHarmoControl
+#6 RunToWallP attr=0 root=1 next=[5]
+    M MoveTrace{"mTgtType": 21, "mRadius": 100.0, "mArriveRadius": 100.0, "mCountTimer": 120.0, "mIsPadWalk": 0, "mIsActSelect": 0, "mIsEndTime": 1}
+    M MoveShot{"mNoShotAttr": 0}
+    M MoveHmAction{"mPadAction": 3}
+    M MoveHarmoControl
+#7 Wait attr=1 root=1 next=[]
+    E EvaluateDefault{"mWeight": 500.0}
+    E EvaluateAIParam{"mCheckParamMode": 2, "mWeight": 200.0}
+    M MoveTime{"mReturn": 1, "mTime": 90, "mIsParamCheck": 0}
+    M MoveShot{"mNoShotAttr": 0}
+    M MovePickMessage{"mMessageType": 6, "mReturn": 0}
+    M MoveDamage{"mDamageLimit": 30.0}
+#8 RunToShotP attr=0 root=1 next=[9]
+    M MoveTrace{"mTgtType": 11, "mRadius": 100.0, "mArriveRadius": 100.0, "mCountTimer": 120.0, "mIsPadWalk": 0, "mIsActSelect": 0, "mIsEndTime": 1}
+    M MoveShot{"mNoShotAttr": 0}
+#9 WaitShotP attr=1 root=1 next=[]
+    E EvaluateDamageRemain{"mIsMinusRemainCheck": 0, "mWeight": -300.0}
+    E EvaluateDefault{"mWeight": 800.0}
+    E EvaluateMessagePickUp{"mMessageType": 12, "mWeight": 300.0}
+    E EvaluateAIParam{"mCheckParamMode": 3, "mWeight": 100.0}
+    M MoveShot{"mNoShotAttr": 0}
+    M MoveTime{"mReturn": 1, "mTime": 40, "mIsParamCheck": 0}
+#10 Avoid-G attr=1 root=1 next=[]
+    F FilterMessagePickUp{"mMessageType": 6, "mInverse": 0, "mAndCheck": 1}
+    E EvaluateDefault{"mWeight": 1000.0}
+    E EvaluateAIParam{"mCheckParamMode": 1, "mWeight": 100.0}
+    M MoveHmAction{"mPadAction": 4}
+    M MoveTime{"mReturn": 1, "mTime": 20, "mIsParamCheck": 1}
+#11 WaitNear attr=0 root=1 next=[4]
+    M MoveDistance{"mTgtType": 0, "mRadius": 200.0, "mIsOut": 1, "mReturn": 2}
+    M MoveTime{"mReturn": 1, "mTime": 20, "mIsParamCheck": 0}
+    M MoveShot{"mNoShotAttr": 0}
+#12 RunToCoverP attr=0 root=1 next=[17]
+    M MoveTrace{"mTgtType": 10, "mRadius": 100.0, "mArriveRadius": 100.0, "mCountTimer": 120.0, "mIsPadWalk": 0, "mIsActSelect": 0, "mIsEndTime": 1}
+    M MoveHmAction{"mPadAction": 3}
+    M MoveShot{"mNoShotAttr": 0}
+    M MoveHarmoControl
+#13 NoTarget attr=512 root=2 next=[14, 21, 1, 30, 31, 40, 48, 24, 67, 75, 78]
+    F FilterTargetExist{"mIsOnlyEnemyExistCheck": 0, "mInverse": 1, "mAndCheck": 1}
+    E EvaluateDefault{"mWeight": 10.0}
+    M MoveHarmoControl
+#14 RunToPatrol attr=0 root=10 next=[15]
+    M MoveTrace{"mTgtType": 11, "mRadius": 100.0, "mArriveRadius": 100.0, "mCountTimer": 120.0, "mIsPadWalk": 0, "mIsActSelect": 0, "mIsEndTime": 1}
+    M MoveShot{"mNoShotAttr": 0}
+#15 CheckWayPoint attr=1 root=10 next=[]
+    E EvaluateDangerArea{"mWeight": 1000.0}
+    E EvaluateDefault{"mWeight": 10.0}
+    M MoveTime{"mReturn": 1, "mTime": 30, "mIsParamCheck": 0}
+#16 Ft-RunToGoal attr=1 root=1 next=[]
+    F FilterDistans{"mTgtType": 0, "mRadius": 1000.0, "mIsInner": 0, "mInverse": 0, "mAndCheck": 1}
+    E EvaluateDefault{"mWeight": 560.0}
+    E EvaluateDistans{"mTgtType": 0, "mRadius": 800.0, "mIsInner": 0, "mIsOnlyHeightCheck": 0, "mWeight": 200.0}
+    E EvaluateDistans{"mTgtType": 1, "mRadius": 1500.0, "mIsInner": 0, "mIsOnlyHeightCheck": 0, "mWeight": 1000.0}
+    E EvaluateAIParam{"mCheckParamMode": 7, "mWeight": 400.0}
+    M MoveTrace{"mTgtType": 5, "mRadius": 100.0, "mArriveRadius": 100.0, "mCountTimer": 120.0, "mIsPadWalk": 0, "mIsActSelect": 0, "mIsEndTime": 1}
+    M MoveShot{"mNoShotAttr": 0}
+    M MoveTime{"mReturn": 1, "mTime": 150, "mIsParamCheck": 0}
+    M MoveDistance{"mTgtType": 0, "mRadius": 1000.0, "mIsOut": 0, "mReturn": 2}
+#17 WaitCoverP attr=1 root=1 next=[]
+    E EvaluateDamageRemain{"mIsMinusRemainCheck": 0, "mWeight": 800.0}
+    E EvaluateDefault{"mWeight": 300.0}
+    E EvaluateDangerArea{"mWeight": 1000.0}
+    E EvaluateDistans{"mTgtType": 0, "mRadius": 700.0, "mIsInner": 1, "mIsOnlyHeightCheck": 0, "mWeight": 400.0}
+    E EvaluateDistans{"mTgtType": 1, "mRadius": 1000.0, "mIsInner": 1, "mIsOnlyHeightCheck": 0, "mWeight": 600.0}
+    E EvaluateAIParam{"mCheckParamMode": 4, "mWeight": 100.0}
+    M MoveTime{"mReturn": 1, "mTime": 30, "mIsParamCheck": 0}
+    M MoveHmAction{"mPadAction": 3}
+    M MoveHarmoControl
+#18 FSM attr=512 root=4 next=[19, 20]
+    F FilterFSM{"mIsOnlyFsmCheck": 0, "mFSMCommand": 1, "mFSMAttr": 0, "mIsFSMGoPosNeedTurn": 0, "mInverse": 0, "mAndCheck": 1}
+    E EvaluateDefault{"mWeight": 50.0}
+    M ReturnX{"mReturn": 1}
+#19 RunToFSM-Pos attr=1 root=4 next=[]
+    F FilterFSM{"mIsOnlyFsmCheck": 0, "mFSMCommand": 1, "mFSMAttr": 0, "mIsFSMGoPosNeedTurn": 0, "mInverse": 0, "mAndCheck": 1}
+    E EvaluateDefault{"mWeight": 1000.0}
+    M MoveTrace{"mTgtType": 8, "mRadius": 100.0, "mArriveRadius": 100.0, "mCountTimer": 120.0, "mIsPadWalk": 0, "mIsActSelect": 0, "mIsEndTime": 0}
+#20 Wait attr=1 root=4 next=[]
+    F FilterFSM{"mIsOnlyFsmCheck": 0, "mFSMCommand": 0, "mFSMAttr": 0, "mIsFSMGoPosNeedTurn": 0, "mInverse": 0, "mAndCheck": 1}
+    M MoveTime{"mReturn": 1, "mTime": 30, "mIsParamCheck": 0}
+#21 RunToGoal attr=0 root=10 next=[22]
+    M MoveTrace{"mTgtType": 5, "mRadius": 100.0, "mArriveRadius": 100.0, "mCountTimer": 120.0, "mIsPadWalk": 0, "mIsActSelect": 0, "mIsEndTime": 1}
+    M MoveShot{"mNoShotAttr": 0}
+#22 WaitGoal attr=1 root=10 next=[]
+    E EvaluateDefault{"mWeight": 200.0}
+    E EvaluateAIParam{"mCheckParamMode": 7, "mWeight": 500.0}
+    M MoveTime{"mReturn": 1, "mTime": 30, "mIsParamCheck": 0}
+    M MoveShot{"mNoShotAttr": 0}
+#23 Avoid attr=1 root=1 next=[]
+    E EvaluateDamageRemain{"mIsMinusRemainCheck": 0, "mWeight": 1000.0}
+    E EvaluateDefault{"mWeight": 500.0}
+    E EvaluateAIParam{"mCheckParamMode": 1, "mWeight": 1000.0}
+    M MoveHmAction{"mPadAction": 4}
+    M MoveTime{"mReturn": 1, "mTime": 20, "mIsParamCheck": 0}
+#24 RunToWp attr=0 root=3 next=[25]
+    M MoveTrace{"mTgtType": 17, "mRadius": 100.0, "mArriveRadius": 100.0, "mCountTimer": 120.0, "mIsPadWalk": 0, "mIsActSelect": 0, "mIsEndTime": 1}
+    M MoveShot{"mNoShotAttr": 0}
+#25 GetWp attr=1 root=3 next=[]
+    F FilterDistans{"mTgtType": 17, "mRadius": 1400.0, "mIsInner": 1, "mInverse": 0, "mAndCheck": 1}
+    E EvaluateDefault{"mWeight": 500.0}
+    E EvaluateDamageRemain{"mIsMinusRemainCheck": 0, "mWeight": -30.0}
+    E EvaluateGetWp{"mWeight": 1000.0}
+    M MoveHmAction{"mPadAction": 12}
+#26 WpChange attr=1 root=1 next=[]
+    E EvaluateDefault{"mWeight": 30.0}
+    E EvaluateDamageRemain{"mIsMinusRemainCheck": 0, "mWeight": -200.0}
+    M MoveHmAction{"mPadAction": 14}
+#27 ShotTaregt attr=1 root=1 next=[]
+    F FilterDistans{"mTgtType": 0, "mRadius": 3000.0, "mIsInner": 1, "mInverse": 0, "mAndCheck": 1}
+    F FilterDistans{"mTgtType": 0, "mRadius": 850.0, "mIsInner": 0, "mInverse": 0, "mAndCheck": 1}
+    F FilterCharStatus{"mCheckChar": 1, "mCheckStatus": 268435456, "mInverse": 1, "mAndCheck": 1}
+    F FilterCharIsXXX{"mCheckMode": 1, "mCheckChar": 1, "mInverse": 1, "mAndCheck": 1}
+    E EvaluateDefault{"mWeight": 700.0}
+    E EvaluateDamageRemain{"mIsMinusRemainCheck": 0, "mWeight": -40.0}
+    E EvaluateDistans{"mTgtType": 0, "mRadius": 1000.0, "mIsInner": 1, "mIsOnlyHeightCheck": 0, "mWeight": -400.0}
+    E EvaluateDistans{"mTgtType": 0, "mRadius": 1500.0, "mIsInner": 0, "mIsOnlyHeightCheck": 0, "mWeight": 300.0}
+    E EvaluateAIParam{"mCheckParamMode": 3, "mWeight": 100.0}
+    M MoveDistance{"mTgtType": 0, "mRadius": 500.0, "mIsOut": 0, "mReturn": 1}
+    M MoveShot{"mNoShotAttr": 0}
+    M MoveTime{"mReturn": 1, "mTime": 90, "mIsParamCheck": 0}
+#28 RunToTarget attr=0 root=1 next=[27]
+    M MoveTrace{"mTgtType": 0, "mRadius": 100.0, "mArriveRadius": 800.0, "mCountTimer": 120.0, "mIsPadWalk": 0, "mIsActSelect": 0, "mIsEndTime": 0}
+    M MoveShot{"mNoShotAttr": 0}
+#29 ThrowG attr=1 root=1 next=[]
+    F FilterDistans{"mTgtType": 0, "mRadius": 3000.0, "mIsInner": 1, "mInverse": 0, "mAndCheck": 1}
+    F FilterDistans{"mTgtType": 0, "mRadius": 500.0, "mIsInner": 0, "mInverse": 0, "mAndCheck": 1}
+    E EvaluateDistans{"mTgtType": 0, "mRadius": 600.0, "mIsInner": 0, "mIsOnlyHeightCheck": 1, "mWeight": 1300.0}
+    E EvaluateAIParam{"mCheckParamMode": 10, "mWeight": 1000.0}
+    M MoveShotGranade
+    M MoveTime{"mReturn": 1, "mTime": 40, "mIsParamCheck": 0}
+#30 RUN attr=1 root=2 next=[]
+    E EvaluateDefault{"mWeight": 300.0}
+    M MoveTrace{"mTgtType": 11, "mRadius": 100.0, "mArriveRadius": 100.0, "mCountTimer": 120.0, "mIsPadWalk": 0, "mIsActSelect": 0, "mIsEndTime": 1}
+#31 RunToWp-NT attr=0 root=10 next=[32]
+    M MoveTrace{"mTgtType": 17, "mRadius": 100.0, "mArriveRadius": 100.0, "mCountTimer": 120.0, "mIsPadWalk": 0, "mIsActSelect": 0, "mIsEndTime": 1}
+#32 GetWp-NT attr=1 root=10 next=[]
+    F FilterDistans{"mTgtType": 17, "mRadius": 30000.0, "mIsInner": 1, "mInverse": 0, "mAndCheck": 1}
+    E EvaluateDefault{"mWeight": 80.0}
+    E EvaluateGetWp{"mWeight": 200.0}
+    M MoveHmAction{"mPadAction": 12}
+#33 TargetDie attr=512 root=8 next=[34, 35, 31, 14, 21, 1]
+    F FilterCharStatus{"mCheckChar": 1, "mCheckStatus": 127, "mInverse": 0, "mAndCheck": 1}
+    E EvaluateDefault{"mWeight": 30.0}
+#34 Appeal1 attr=1 root=8 next=[]
+    E EvaluateDefault{"mWeight": 20.0}
+    E EvaluateAIParam{"mCheckParamMode": 11, "mWeight": 500.0}
+    M MoveHmAction{"mPadAction": 26}
+#35 Wait attr=1 root=8 next=[]
+    M MoveTime{"mReturn": 1, "mTime": 30, "mIsParamCheck": 0}
+#36 RunToReload attr=0 root=1 next=[37]
+    M MoveTrace{"mTgtType": 10, "mRadius": 100.0, "mArriveRadius": 100.0, "mCountTimer": 120.0, "mIsPadWalk": 0, "mIsActSelect": 0, "mIsEndTime": 1}
+    M MoveHmAction{"mPadAction": 3}
+#37 Reload attr=1 root=1 next=[]
+    F FilterReload{"mInverse": 0, "mAndCheck": 1}
+    E EvaluateAIParam{"mCheckParamMode": 3, "mWeight": 100.0}
+    E EvaluateReload{"mWeight": 500.0}
+    M MoveHmAction{"mPadAction": 2}
+    M MoveHmAction{"mPadAction": 3}
+#38 AutoRappel attr=512 root=16 next=[72]
+    F FilterIsAction{"mCheckMode": 1, "mInverse": 0, "mAndCheck": 1}
+    E EvaluateDefault{"mWeight": 70.0}
+#39 AnchorCancel attr=1 root=16 next=[]
+    E EvaluateDefault{"mWeight": 60.0}
+    M MoveHmAction{"mPadAction": 24}
+#40 Reload attr=1 root=2 next=[]
+    F FilterReload{"mInverse": 0, "mAndCheck": 1}
+    E EvaluateDefault{"mWeight": 800.0}
+    M MoveHmAction{"mPadAction": 2}
+#41 TEST attr=1 root=32 next=[]
+    F FilterTrue{"mInverse": 0, "mAndCheck": 1}
+    E EvaluateDefault{"mWeight": 10000.0}
+    M MoveTrace{"mTgtType": 1, "mRadius": 100.0, "mArriveRadius": 100.0, "mCountTimer": 120.0, "mIsPadWalk": 0, "mIsActSelect": 0, "mIsEndTime": 0}
+#42 TEST attr=512 root=32 next=[41]
+    F FilterTrue{"mInverse": 1, "mAndCheck": 1}
+    E EvaluateDefault{"mWeight": 10000.0}
+#43 YATTA attr=512 root=64 next=[44, 45, 46]
+    F FilterCharStatus{"mCheckChar": 0, "mCheckStatus": 4294967296, "mInverse": 0, "mAndCheck": 1}
+    E EvaluateDefault{"mWeight": 100.0}
+    M MoveShot{"mNoShotAttr": 0}
+#44 Yt-Shot attr=1 root=64 next=[]
+    E EvaluateDefault{"mWeight": 100.0}
+    M MoveShot{"mNoShotAttr": 0}
+    M MoveTime{"mReturn": 1, "mTime": 60, "mIsParamCheck": 0}
+#45 Yt-Wait attr=1 root=64 next=[]
+    E EvaluateDefault{"mWeight": 80.0}
+    M MoveTime{"mReturn": 1, "mTime": 150, "mIsParamCheck": 0}
+#46 Yt-RideOff attr=1 root=64 next=[]
+    F FilterDistans{"mTgtType": 0, "mRadius": 1000.0, "mIsInner": 0, "mInverse": 0, "mAndCheck": 1}
+    E EvaluateDistans{"mTgtType": 16, "mRadius": 1500.0, "mIsInner": 1, "mIsOnlyHeightCheck": 0, "mWeight": 500.0}
+    M MoveHmAction{"mPadAction": 1}
+    M MoveTime{"mReturn": 1, "mTime": 30, "mIsParamCheck": 0}
+#47 YattaRideOn attr=1 root=3 next=[]
+    F FilterTracePos{"mTgtType": 22, "mInverse": 0, "mAndCheck": 1}
+    E EvaluateDefault{"mWeight": 1500.0}
+    M MoveHmAction{"mPadAction": 1}
+    M MoveTime{"mReturn": 1, "mTime": 30, "mIsParamCheck": 0}
+#48 RunToYatta attr=0 root=3 next=[47]
+    M MoveTrace{"mTgtType": 22, "mRadius": 100.0, "mArriveRadius": 100.0, "mCountTimer": 120.0, "mIsPadWalk": 0, "mIsActSelect": 0, "mIsEndTime": 1}
+#49 RunToApproach attr=0 root=1 next=[50]
+    M MoveTrace{"mTgtType": 13, "mRadius": 100.0, "mArriveRadius": 100.0, "mCountTimer": 120.0, "mIsPadWalk": 0, "mIsActSelect": 0, "mIsEndTime": 0}
+    M MoveShot{"mNoShotAttr": 0}
+#50 WaitAppPoint attr=1 root=1 next=[]
+    E EvaluateDefault{"mWeight": 500.0}
+    E EvaluateDistans{"mTgtType": 0, "mRadius": 1000.0, "mIsInner": 0, "mIsOnlyHeightCheck": 0, "mWeight": 500.0}
+    M MoveShot{"mNoShotAttr": 0}
+    M MoveTime{"mReturn": 1, "mTime": 15, "mIsParamCheck": 0}
+#51 Ft-RunToReader attr=0 root=1 next=[52]
+    M MoveTrace{"mTgtType": 1, "mRadius": 100.0, "mArriveRadius": 1000.0, "mCountTimer": 120.0, "mIsPadWalk": 0, "mIsActSelect": 0, "mIsEndTime": 0}
+    M MoveShot{"mNoShotAttr": 0}
+#52 Ft-WaitReader attr=1 root=1 next=[]
+    F FilterDistans{"mTgtType": 1, "mRadius": 2000.0, "mIsInner": 0, "mInverse": 0, "mAndCheck": 1}
+    F FilterDistans{"mTgtType": 1, "mRadius": 5000.0, "mIsInner": 1, "mInverse": 0, "mAndCheck": 1}
+    E EvaluateDefault{"mWeight": 850.0}
+    M MoveShot{"mNoShotAttr": 0}
+    M MoveTime{"mReturn": 1, "mTime": 15, "mIsParamCheck": 0}
+#53 FightShield attr=512 root=128 next=[54, 55, 56]
+    F FilterTargetExist{"mIsOnlyEnemyExistCheck": 0, "mInverse": 0, "mAndCheck": 1}
+    F FilterWeapon{"mWpMode": 0, "mWpAttr": 18443296005244846079, "mWpAttr2": 18446744073709551615, "mInverse": 1, "mAndCheck": 1}
+    F FilterDistans{"mTgtType": 0, "mRadius": 2500.0, "mIsInner": 1, "mInverse": 0, "mAndCheck": 1}
+    F FilterCharStatus{"mCheckChar": 0, "mCheckStatus": 127, "mInverse": 0, "mAndCheck": 1}
+    E EvaluateDefault{"mWeight": 25.0}
+    M MoveShot{"mNoShotAttr": 3}
+#54 ShieldWait attr=1 root=128 next=[]
+    E EvaluateDefault{"mWeight": 700.0}
+    M MoveShot{"mNoShotAttr": 3}
+    M MoveDistance{"mTgtType": 0, "mRadius": 300.0, "mIsOut": 0, "mReturn": 2}
+#55 ShieldAttack attr=1 root=128 next=[]
+    F FilterDistans{"mTgtType": 0, "mRadius": 350.0, "mIsInner": 1, "mInverse": 0, "mAndCheck": 1}
+    E EvaluateDistans{"mTgtType": 0, "mRadius": 400.0, "mIsInner": 1, "mIsOnlyHeightCheck": 0, "mWeight": 1000.0}
+    M MoveShot{"mNoShotAttr": 0}
+    M MoveHmAction{"mPadAction": 1}
+    M MoveTime{"mReturn": 1, "mTime": 30, "mIsParamCheck": 0}
+#56 MoveTargetShield attr=0 root=128 next=[57]
+    M MoveTrace{"mTgtType": 0, "mRadius": 100.0, "mArriveRadius": 100.0, "mCountTimer": 120.0, "mIsPadWalk": 0, "mIsActSelect": 0, "mIsEndTime": 0}
+#57 ShieldWaitTg attr=1 root=128 next=[]
+    F FilterDistans{"mTgtType": 0, "mRadius": 1000.0, "mIsInner": 1, "mInverse": 0, "mAndCheck": 1}
+    E EvaluateDefault{"mWeight": 800.0}
+    M MoveShot{"mNoShotAttr": 0}
+    M MoveTime{"mReturn": 1, "mTime": 60, "mIsParamCheck": 0}
+#58 WAIT_AREA attr=512 root=256 next=[59, 60, 61]
+    F FilterArea{"mCheckArea": 4, "mInverse": 0, "mAndCheck": 1}
+    E EvaluateDefault{"mWeight": 45.0}
+#59 GoWPos attr=1 root=256 next=[]
+    F FilterTracePos{"mTgtType": 23, "mInverse": 0, "mAndCheck": 1}
+    E EvaluateDefault{"mWeight": 1000.0}
+    M MoveTrace{"mTgtType": 23, "mRadius": 100.0, "mArriveRadius": 100.0, "mCountTimer": 120.0, "mIsPadWalk": 0, "mIsActSelect": 0, "mIsEndTime": 0}
+#60 Wait attr=1 root=256 next=[]
+    E EvaluateDefault{"mWeight": 30.0}
+    M MoveTime{"mReturn": 1, "mTime": 30, "mIsParamCheck": 1}
+#61 Appeal attr=1 root=256 next=[]
+    M MoveHmAction{"mPadAction": 9}
+    M MoveTime{"mReturn": 1, "mTime": 90, "mIsParamCheck": 0}
+#62 SeeOrSpaceJump attr=512 root=512 next=[63]
+    F FilterArea{"mCheckArea": 2, "mInverse": 0, "mAndCheck": 1}
+    F FilterCharIsXXX{"mCheckMode": 0, "mCheckChar": 0, "mInverse": 1, "mAndCheck": 1}
+    E EvaluateDefault{"mWeight": 72.0}
+#63 JumpControl attr=1 root=512 next=[]
+    E EvaluateDefault{"mWeight": 1000.0}
+    M MoveJumpControl
+#64 AVOID_AREA attr=512 root=1024 next=[65, 66]
+    F FilterArea{"mCheckArea": 5, "mInverse": 0, "mAndCheck": 1}
+    E EvaluateDefault{"mWeight": 46.0}
+#65 GoAvoidPos attr=1 root=1024 next=[]
+    E EvaluateDefault{"mWeight": 50.0}
+    M MoveTrace{"mTgtType": 24, "mRadius": 100.0, "mArriveRadius": 100.0, "mCountTimer": 120.0, "mIsPadWalk": 0, "mIsActSelect": 0, "mIsEndTime": 0}
+#66 Avoid attr=1 root=1024 next=[]
+    F FilterTrue{"mInverse": 1, "mAndCheck": 1}
+    E EvaluateDefault{"mWeight": 0.0}
+    M MoveHmAction{"mPadAction": 4}
+#67 RunEgg attr=0 root=3 next=[68]
+    M MoveTrace{"mTgtType": 26, "mRadius": 100.0, "mArriveRadius": 100.0, "mCountTimer": 120.0, "mIsPadWalk": 0, "mIsActSelect": 0, "mIsEndTime": 0}
+    M MoveShot{"mNoShotAttr": 0}
+#68 GetEgg attr=1 root=3 next=[]
+    F FilterGetAkEgg{"mInverse": 0, "mAndCheck": 1}
+    E EvaluateDefault{"mWeight": 1500.0}
+    M MoveHmAction{"mPadAction": 12}
+#69 EggToGoal attr=512 root=2048 next=[70, 71, 73]
+    F FilterWeapon{"mWpMode": 0, "mWpAttr": 18446744073709551615, "mWpAttr2": 18446744073436921855, "mInverse": 1, "mAndCheck": 1}
+    E EvaluateDefault{"mWeight": 23.0}
+#70 RunEggGoal attr=1 root=2048 next=[]
+    F FilterDistans{"mTgtType": 27, "mRadius": 4000.0, "mIsInner": 1, "mInverse": 0, "mAndCheck": 1}
+    E EvaluateDefault{"mWeight": 100.0}
+    M MoveTrace{"mTgtType": 27, "mRadius": 100.0, "mArriveRadius": 100.0, "mCountTimer": 120.0, "mIsPadWalk": 0, "mIsActSelect": 0, "mIsEndTime": 0}
+#71 RunToGoal_Egg attr=1 root=2048 next=[]
+    M MoveTrace{"mTgtType": 5, "mRadius": 100.0, "mArriveRadius": 100.0, "mCountTimer": 120.0, "mIsPadWalk": 0, "mIsActSelect": 0, "mIsEndTime": 0}
+#72 RPWait attr=0 root=16 next=[39, 74]
+    M MoveTime{"mReturn": 1, "mTime": 90, "mIsParamCheck": 0}
+    M MoveShot{"mNoShotAttr": 0}
+#73 RunPlyer_Egg attr=1 root=2048 next=[]
+    F FilterTrue{"mInverse": 1, "mAndCheck": 1}
+    M MoveTrace{"mTgtType": 1, "mRadius": 100.0, "mArriveRadius": 100.0, "mCountTimer": 120.0, "mIsPadWalk": 0, "mIsActSelect": 0, "mIsEndTime": 0}
+#74 AnchorJump attr=1 root=16 next=[]
+    M MoveHmAction{"mPadAction": 23}
+#75 RunToFriend attr=0 root=3 next=[76]
+    M MoveTrace{"mTgtType": 1, "mRadius": 100.0, "mArriveRadius": 100.0, "mCountTimer": 120.0, "mIsPadWalk": 0, "mIsActSelect": 0, "mIsEndTime": 0}
+    M MoveShot{"mNoShotAttr": 0}
+#76 FriendFollow attr=1 root=3 next=[]
+    F FilterDistans{"mTgtType": 1, "mRadius": 5000.0, "mIsInner": 1, "mInverse": 0, "mAndCheck": 1}
+    E EvaluateAIParam{"mCheckParamMode": 9, "mWeight": 1000.0}
+    E EvaluateDefault{"mWeight": 500.0}
+    M MoveShot{"mNoShotAttr": 0}
+    M MoveTime{"mReturn": 1, "mTime": 90, "mIsParamCheck": 0}
+#77 DeffAkEgg attr=1 root=3 next=[]
+    F FilterDefenceAkEgg{"mInverse": 0, "mAndCheck": 1}
+    E EvaluateDefault{"mWeight": 1500.0}
+    M MoveShot{"mNoShotAttr": 0}
+    M MoveHmAction{"mPadAction": 3}
+    M MoveTime{"mReturn": 1, "mTime": 150, "mIsParamCheck": 0}
+#78 RunEggArround attr=0 root=3 next=[77]
+    M MoveTrace{"mTgtType": 26, "mRadius": 100.0, "mArriveRadius": 400.0, "mCountTimer": 120.0, "mIsPadWalk": 0, "mIsActSelect": 0, "mIsEndTime": 0}
