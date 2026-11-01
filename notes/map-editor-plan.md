@@ -727,3 +727,13 @@ havok mesh like the collision, plus other maps' pieces' tama). Fixed: other maps
 - Flow: switch (cases, 7 outs), sequence, gate (4 ins), once, branch, chance, cooldown. Ports now up to 4 in / 8 out.
 - Asked next: one-way walls (idea: thin volume, per character update compare mOldPos and pos across its plane, push
   back when crossing the wrong way; bullets / grenades not affected).
+
+## One-way walls (2026-11-01)
+Volume effect "oneway" {players, vs, bullets, grenades, akrid} -> map.json "oneway_volumes" (min/max/yaw/sid + flags).
+DLL oneway.cpp wraps the only two calls of uCharacter::vf55 (saves pos -> mOldPos; DX9 0x998d50 / DX11 0x9a8530):
+in uCharacterBase::vf55 (DX9 call 0x9ae434 / DX11 0x9bdda4: players, VS, akrid by ch[0x1f] 1/2/3) and uShellBase::vf55
+(DX9 0xe3a903 / DX11 0xe4a6e3: all shells; grenade = DTI chain reaches uShell01, DX9 0x1894880 / DX11 0x18a4920).
+Per-unit last position (250 ms stale = new); segment-vs-turned-box test; moving against the arrow (local +z) through
+the box: characters lose the move's local-z part (pos, world pos, old pos, old world pos), shells get state 3 (deleted).
+Runs on every machine. Offline-tested (Wine). Untested in game: riding humans in VS, remote-player jitter, Havok
+grenades possibly re-setting their position, whether removed shells leave effects behind.

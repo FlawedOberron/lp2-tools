@@ -387,7 +387,8 @@ def script_manifest(p, log=print):
 def gravity_manifest(p):
     """map.json gravity and screen settings for the xlive mod (gravity.cpp, post.cpp): environment jump_packs /
     underwater / gravity, gravity volumes, post-process volumes, water volumes (water.cpp: water up to the box's top),
-    damage volumes (damage.cpp: "damage": {player, vs: % of full health per second; player_kill / vs_kill: at once})"""
+    damage volumes (damage.cpp: "damage": {player, vs: % of full health per second; player_kill / vs_kill: at once}),
+    one-way walls (oneway.cpp: "oneway": {players, vs, bullets, grenades, akrid}: crossed along the box's arrow only)"""
     env, out = p.get("environment", {}), {}
     if env.get("jump_packs"):
         out["jump_packs"] = True
@@ -401,6 +402,7 @@ def gravity_manifest(p):
     posts = []
     water = []
     damage = []
+    oneway = []
     sids = script_volume_ids(p)
     for v in all_parts(p):
         lo, hi = volume_local(v)
@@ -418,6 +420,10 @@ def gravity_manifest(p):
                     e[k] = True
             if e["player"] or e["vs"] or e.get("player_kill") or e.get("vs_kill"):
                 damage.append(e)
+        if v.get("oneway"):
+            flags = {k: True for k in ("players", "vs", "bullets", "grenades", "akrid") if v["oneway"].get(k)}
+            if flags:
+                oneway.append(dict(min=lo, max=hi, **flags, **turn))
         if volume_gravity(v) is not None:
             vols.append(dict(min=lo, max=hi, gravity=volume_gravity(v), **turn))
         if v.get("post"):
@@ -433,6 +439,8 @@ def gravity_manifest(p):
         out["water_volumes"] = water
     if damage:
         out["damage_volumes"] = damage
+    if oneway:
+        out["oneway_volumes"] = oneway
     return out
 
 
