@@ -105,6 +105,36 @@ Unknowns to pin down:
 - The WAY mask (likely the VisibilityHigh / Low analyzers: the two u16 halves = standing / crouched
   visibility in 16 directions).
 
+## C2. A brain per game mode (user, 2026-11-01)
+
+Stock has ONE battle brain for every mode, and no filter for the game mode. Mode behaviour only appears
+when its targets exist: the egg items need an egg, the post items need a post.
+
+Posts today (`RunToDataPost` / `ExecDataPost`):
+- They are only children of `Fight`, so only considered while a target exists.
+- Capturing needs the post within 15 m and no enemy within 5 m.
+- Weight 300 + 1000 (EvaluateDataPostOn), minus damage. Capturing aborts on 10 damage or an enemy within 4 m.
+- So bots treat posts as a side task in every mode.
+
+The user wants posts to matter far more in Post Grab than in Elimination / Team Elimination.
+
+Plan: one brain file per mode family. Each is generated from one base by lp2think.py edit rules, so a fix to
+the base reaches all of them.
+
+| Brain | What changes |
+| --- | --- |
+| Elimination / Team Elimination | Base + weapon logic. Posts are opportunistic (stock weights). |
+| Post Grab (Datapost) | Posts top-level, not only under Fight. RunToDataPost even with no target. ExecDataPost weight ~3000 and keeps capturing under light fire. Spread over posts: nearest unowned / contested first, defend held ones. |
+| Akrid Egg | Egg items raised; escort the carrier (RunToFriend / FriendFollow); defend the goal. |
+| Fugitive / Counter / other team modes | Tuned once their item sets are read (FilterTeamCommand, RunToTargetBot / RunToReaderBot). |
+
+Loading per mode needs RE:
+- Where the uHm40 bot binds its rThinkPlanAI: the reference sits in uHm6d.arc's character data, or is
+  looked up by path.
+- Then the DLL picks a brain by the setup's kind (setup +0x28) at match start: either a path redirect or
+  swapping the resource pointer on each bot.
+- Fallback if neither works: a Tier 3 custom "game mode" filter class, so one brain can branch.
+
 ## D. Bots on any map (from the navmesh work)
 
 - lp2navgen.py builds the LNV + WAY (done, 2335524; in-game test in Mods/navtest).
@@ -117,6 +147,6 @@ Unknowns to pin down:
 1. An xfs.py writer, checked by a byte-identical round trip of the three brains and Pef. Then
    lp2think.py edit / build.
 2. Bot Match entry + screen (RE steps A1-A3), stock bot maps, with the rows wired to the existing bot code.
-3. Tier 1 weapon logic as an "Improved" brain (a Mods overlay). The user tests it against Stock.
+3. Tier 1 weapon logic as an "Improved" brain + per-mode brains (C2: Post Grab first). The user tests them against Stock.
 4. VS piloting RE + Tier 2.
 5. Package bot areas (D), then Tier 3.
