@@ -376,6 +376,9 @@ def script_manifest(p, log=print):
         if "marker" in v:
             markers.append({"name": script_var_name(v["marker"]), "pos": list(v["pos"]),
                             "size": list(v.get("size", [100, 200, 100])), "yaw": volume_yaw(v)})
+    for t in p.get("script_tags", []):   # any object's script name (the editor's: pieces, lights, spawns, pickups, VS)
+        markers.append({"name": script_var_name(t["name"]), "pos": [float(x) for x in t["pos"]],
+                        "size": [float(x) for x in t.get("size", [100, 200, 100])], "yaw": float(t.get("yaw", 0.0)) % 360.0})
     natural = lambda m: [int(t) if t.isdigit() else t for t in re.split(r"(\d+)", m["name"])]
     markers.sort(key=natural)
     log(f"  script: {len(nodes)} node(s), {len(sids)} volume(s), {len(names)} variable(s), {len(markers)} marker(s)")

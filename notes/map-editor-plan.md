@@ -737,3 +737,11 @@ Per-unit last position (250 ms stale = new); segment-vs-turned-box test; moving 
 the box: characters lose the move's local-z part (pos, world pos, old pos, old world pos), shells get state 3 (deleted).
 Runs on every machine. Offline-tested (Wine). Untested in game: riding humans in VS, remote-player jitter, Havok
 grenades possibly re-setting their position, whether removed shells leave effects behind.
+
+## Script names + eyedropper (2026-11-01)
+Any object can have a script name (inspector "Script name"): markers' data "tag", pieces' tree "tag" (kept by
+geometry.json), volumes = their marker name. On save -> project "script_tags" [{name, pos floor centre cm, size, yaw}]
+(pieces: world AABB, yaw 0); lp2mapc appends them to script_markers, so every marker node (get/find/wildcard,
+teleport, spawn, vector) works on them. Shared names = a group. Scripts window "Pick from level": the next click in
+the level adds a Get marker node (variable named after the object; auto-names stem_N if unnamed); a volume pops a menu
+(Get marker / Volume entered / Volume effects / Set volume value). Esc cancels.
