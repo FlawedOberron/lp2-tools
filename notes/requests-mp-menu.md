@@ -171,6 +171,14 @@ uIdBattle / SprLayout ranking00) -> lives left / ELIMINATED red, FFA first; 2 te
   format in its docstring; area tree reader DX9 759940). blender_lp2nav.py imports into a map .blend; Train_26 overlays
   ONLINE_12 exactly (floor triangles coplanar with the map's floor). Open: WAY per-point u32 (cover?), poly flag bits
   (0x400/0x800/0x40000/0x2000000), LNV area_tail second u16, quadtree cell entry 2nd u32 (0 in WAY).
+- 2026-11-01 navmesh step 3 (generator) DONE: lp2navgen.py build OUTDIR NAME COL.rCollision... (Recast CLI navgen/,
+  build.sh). Floor source = atari + placed pieces; ONLINE_12 bot areas use atarionline12 + ataricubescr0 (baked block
+  layout, in aArea_TUTOREAL_51_v; online layouts place om836x/837x/838x blocks per variant in rObjSet groups 2/3 with
+  pos 0x40, yaw 0x54, scale 0x60). Stock has no wall erosion (radius 0); polys inside hollow blocks dropped (first
+  surface above faces up). vs stock Train_26: 99.8% of ours on stock floor, 88% of stock covered (collision ceiling
+  ~90%). WAY mask = fitted guess (bit b open = no hit within 3 m at 1 m up towards 90-22.5b deg from +x; 87% bits
+  agree). In-game test installed: Mods/navtest (TUTOREAL_51-55 arcs with generated Train_26) - remove the folder to undo.
+  Mask consumer (if bots misbehave): node+0x44 array, rAIWayPoint::vf9 6dc6d0; AI service code 0058xxxx.
 
 ## Update check + auto-updater (user, 2026-10-22; later)
 - The DLL checks for a newer release on start (GitHub releases of FlawedOberron/xlive-steamworks-lp2, the
