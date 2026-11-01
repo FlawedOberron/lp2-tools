@@ -193,3 +193,63 @@ ours. Keep the brain items (they ask "is there a target", "how far") working unc
 4. Perception / target choice RE + model (C4); VS piloting RE + Tier 2.
 4b. Priority grabs (C3) with the editor field, when Kill Confirmed tags are built.
 5. Package bot areas (D), then Tier 3.
+
+## Status 2026-11-01 (night session)
+
+DONE + installed (Steam copy; retail gets the DLL, but the bot hooks are unported there):
+- xfstree.py: a lossless XFS read / write. The brains, Pef and 114 area files round-trip byte-identical;
+  rAIFSM (object references) doesn't parse yet.
+- lp2brain.py builds Mods/bots/nativePC/arcLp2Xml/autoArc/uHm6d.arc: stock + HumanBotBt_{elim,team,post,fox,egg}.
+  - Base for every mode:
+    - ShotClose (shotguns, <=15 m, prefer <6 m) under a new RunToTargetClose (arrive 2.5 m).
+    - ShotLong (long range, 12-60 m, prefer >25 m). ShotHeavy (rockets, 7-40 m, penalised <10 m).
+    - The stock ShotTaregt now only for other weapons.
+    - WpChange-Close / -Far / -HeavyClose / -Long: range swaps, only when the OTHER weapon suits the range.
+  - post: ExecDataPost for any post on the map (was 15 m). Weight 2200 (was 300). Aborted only by an enemy
+    within 2.5 m or 60 damage. The run to the post survives 150 damage.
+  - egg: GetEgg 3000, RunEggGoal 1500, RunToGoal_Egg 1200, FriendFollow 1500.
+- DLL src/mods/bots.cpp (uncommitted by design):
+  - Brain swap at spawn: think setter DX9 f7f0f0 / DX11 f8f060. Mode from game +0x8174.
+  - FilterWeapon mWpMode 3 = the other weapon: DX9 980410 / DX11 98fd90. Held / other weapon: DX9
+    +0x1678 / +0x1694, DX11 +0x1688 / +0x16a4.
+  - Personalities via cAIPlanEvaluateAIParam::vf5 (DX9 982c80 / DX11 992600). cAIParam block at unit
+    +0x2418 / +0x2428, bytes x 0.01.
+    - Archetypes: aggressor / tactician / cautious / show-off / grenadier, logged per bot.
+    - Taunt (Appeal1 after a kill, pad 26) gated by a per-bot 4 s roll: 70% show-off, 40% aggressor,
+      25% grenadier, 15% tactician, 5% cautious.
+    - Only in bot-match areas (game +599 == 0).
+- Weapon masks, AIParam modes and the game kind enum are decoded (lp2brain.py docstring, bots.cpp header).
+  Game kinds: 1-3 Elimination, 4-6 team battles, 7 VS, 8 Post Grab, 9 Counter, 10 Fugitive, 11 Akrid Egg.
+  InitPos / ObjSet name table at DX9 0x173c3dc.
+
+USER TEST (log lines "mods: bots:"):
+- On install: "per-mode brains on".
+- At spawn: "game kind N -> brain HumanBotBt_x (loaded)". If it says "missing", the game didn't find the
+  overlay entries.
+- Each bot: "<unit> is a <archetype>".
+- Watch for:
+  - Shotgun bots closing in, rifle bots hanging back.
+  - Bots swapping weapons by range.
+  - Post Grab (AI Enemy Battle game type 3) bots rushing posts.
+  - Show-offs taunting after kills.
+- Undo: delete Mods/bots (stock brain) and/or the DLL's bots hooks.
+
+Bot Match screen RE (not built; next session, needs in-game iteration):
+- AI Enemy Battle start = aTrainingTop::vf7 (DX9 8a0250). On menu state 5 it calls
+  FUN_0082c9a0 thiscall(*(0x18c0c34), 0, (phase*5 + map)*5 + 1 + rule): the scene switch to the area
+  class from the table at 0x17365a8 (16 B: cat, num, DTI at +0xc).
+  - Bot areas are 51 + map*5 + rule.
+  - map: 0 ONLINE_12, 1 ONLINE_10, 2 ONLINE_12 (block layout 2, Train_36), 3 ONLINE_01, 4 ONLINE_09.
+- The bot area's mode start (DX9 8644d0; we already hook its bot count) does three things:
+  - Copies the 0x64-byte rules block from match setup (0x18427b0) +0x28.
+  - Sets the kind by area: 51+5k -> 1, 52 -> 4, 53 -> 8, 54 -> 9, 55 -> 11. It also sets [1]=[2]=0 and the
+    offline flags.
+  - Applies the block with FUN_00863540(block).
+  => Bot Match = pick the area by kind family + map, start it as above, and swap our rules block in at
+  that FUN_00863540 call.
+- Match setup +0x78 / +0x79 = area category / number for online starts (FUN_007cf170 / 7cf1c0 set the
+  game's +599 / +0x25a).
+- Open: the create-match screen keeps a 0x38-byte "rules bytes" record (rules.cpp). It needs mapping to the
+  0x64-byte setup block: find where the system-link start converts it (watch setup+0x28 writes after Create).
+  - UX option with less Flash work: a create-screen row "Match: Online / Bots (offline)". On Create with
+    Bots, call the start above instead of creating the session, plus a Bots row (count) and the existing rows.
