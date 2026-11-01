@@ -717,3 +717,7 @@ havok mesh like the collision, plus other maps' pieces' tama). Fixed: other maps
   (DX9 +0xc10 / +0xc60, DX11 +0xc20 / +0xc70; vf55 copies pos -> old each update, names from uCharacter vf3) so the move's
   collision sweep starts there. Applied on the player's own machine (act msg 4 now carries pos[3]). Untested in game:
   velocity is kept; a VS body (Body kind 2) may need its physics too. "Init Pos Set" FSM (FUN_01015370) only stores +0xc40.
+- Teleport facing: uCoord set angle DX9 0x66cad0 / DX11 0x677b00, thiscall(unit, float euler[3] radians) as the set
+  spawner FUN_00f716c0 turns units from a record's rot (degrees x deg2rad; call sites 0xf71805 / 0xf81695): yaw = the
+  marker's (records' convention). Untested: the player's control / camera may re-turn the body.
+- FIX: DamageInstall never set g_damage (an edit hadn't applied): script damage / kill would have done nothing. Now set.

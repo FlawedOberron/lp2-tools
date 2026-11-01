@@ -223,7 +223,7 @@ SCRIPT_TYPES = {
     "findmarkers": (("in",), ("found", "none"), ("text",)),
     "getmarker": (("in",), ("found", "none"), ("text", "random")),
     "spawn": (("in",), ("spawned", "skipped"), ("kind", "items", "random")),
-    "teleport": (("in",), ("moved", "skipped"), ("random",)),
+    "teleport": (("in",), ("moved", "skipped"), ("random", "face")),
 }
 SCRIPT_VOLUME_NODES = ("enter", "volume", "setvalue")
 # the variables a node names, by field: number ("var"), player ("player"; optional on enter), list ("list")
