@@ -135,6 +135,48 @@ Loading per mode needs RE:
   swapping the resource pointer on each bot.
 - Fallback if neither works: a Tier 3 custom "game mode" filter class, so one brain can branch.
 
+## C3. Priority grabs (user, 2026-11-01)
+
+Any pickup can carry a "bot priority" weight:
+- Weapons, VS, posts, eggs, and future items such as Kill Confirmed tags.
+- Set per object in the editor (inspector field, compiled into the package) and per mode (a mode's
+  defaults, e.g. tags 3000 in Kill Confirmed).
+
+Brain side: one `GrabPriority` item that scores the best flagged item as weight x distance falloff, minus
+danger on the way. Stock GetWp only knows weapons (target type 17), so the item needs a DLL-side
+target / evaluation (Tier 3 hook) that reads our item list.
+
+## C4. Perception and target choice (user, 2026-11-01)
+
+Stock:
+- Bots know every enemy near them (no sight or hearing check found in the brain data).
+- Once locked on, they keep the target until it dies.
+- Target choice and perception are in code, not in rThinkPlanAI: uHm40 (big candidates vf94 c21480,
+  vf336, vf136) and cTarget. RE: find where the bot's target is chosen and stored, and what feeds it.
+
+New model (DLL, per bot, shared by every brain):
+- **Sight**:
+  - View cone: ~110 deg calm, ~160 deg alerted. Range by difficulty.
+  - Line of sight: a ray against tama (bullet) collision.
+  - A detection meter fills faster when the enemy is close, moving, shooting or in the open, and slower
+    when crouched, still or far.
+- **Hearing**: gunfire / explosions within each weapon's loudness radius, footsteps close by, and the
+  direction of damage taken. Gives an approximate position, not a lock.
+- **Radar**: what the bot's own radar would show under the match's radar rule (the planned Radar
+  Behaviour row: Normal / moving + shooting / shooting / none). A blip = rough position -> investigate,
+  never snap-aim.
+- **Memory**: last known position + time. Search there, then forget after N s.
+- **Team callouts**: teammates' sightings shared after a short delay (cAISvBlackBoard exists, maybe usable).
+- **Target choice**, rescored every ~0.4 s:
+  - Score = threat (shooting at me / damaged me recently / aiming at me) + distance + low health (finish
+    off) + weapon danger + a stickiness bonus for the current target.
+  - Switch when the score clearly beats the current one, or when the current one is out of sight for 2-3 s.
+  - A switch costs a reaction delay.
+- **Difficulty**: reaction time, aim error / settle time, cone and range, meter speed.
+
+Hook plan: gate the stock target setter (only "known" enemies may be chosen) and override its pick with
+ours. Keep the brain items (they ask "is there a target", "how far") working unchanged.
+
 ## D. Bots on any map (from the navmesh work)
 
 - lp2navgen.py builds the LNV + WAY (done, 2335524; in-game test in Mods/navtest).
@@ -148,5 +190,6 @@ Loading per mode needs RE:
    lp2think.py edit / build.
 2. Bot Match entry + screen (RE steps A1-A3), stock bot maps, with the rows wired to the existing bot code.
 3. Tier 1 weapon logic as an "Improved" brain + per-mode brains (C2: Post Grab first). The user tests them against Stock.
-4. VS piloting RE + Tier 2.
+4. Perception / target choice RE + model (C4); VS piloting RE + Tier 2.
+4b. Priority grabs (C3) with the editor field, when Kill Confirmed tags are built.
 5. Package bot areas (D), then Tier 3.
