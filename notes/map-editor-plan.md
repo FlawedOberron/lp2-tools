@@ -713,3 +713,7 @@ havok mesh like the collision, plus other maps' pieces' tama). Fixed: other maps
   character update. Compiler adds the items' uWpXX / uVsXX to "preload".
 - RISKS (test first offline): crash in the spawner; spawned pickups / VS not network-linked between machines (each has
   its own copy: pickup / boarding may desync); VS spawns honour the lobby VS setting; VS weapon mounts unset.
+- Teleport (Set player position node, 2026-11-01): writes +0x30 pos, +0xd0 world pos and uCharacter mOldPos / mOldWorldPos
+  (DX9 +0xc10 / +0xc60, DX11 +0xc20 / +0xc70; vf55 copies pos -> old each update, names from uCharacter vf3) so the move's
+  collision sweep starts there. Applied on the player's own machine (act msg 4 now carries pos[3]). Untested in game:
+  velocity is kept; a VS body (Body kind 2) may need its physics too. "Init Pos Set" FSM (FUN_01015370) only stores +0xc40.

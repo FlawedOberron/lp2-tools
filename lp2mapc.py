@@ -223,12 +223,13 @@ SCRIPT_TYPES = {
     "findmarkers": (("in",), ("found", "none"), ("text",)),
     "getmarker": (("in",), ("found", "none"), ("text", "random")),
     "spawn": (("in",), ("spawned", "skipped"), ("kind", "items", "random")),
+    "teleport": (("in",), ("moved", "skipped"), ("random",)),
 }
 SCRIPT_VOLUME_NODES = ("enter", "volume", "setvalue")
 # the variables a node names, by field: number ("var"), player ("player"; optional on enter), list ("list")
 SCRIPT_VAR_NODES = ("set", "if", "random", "math", "listcount", "playerget", "loop")
 SCRIPT_PLAYER_NODES = ("enter", "list", "listget", "foreach", "playercheck", "playerget", "playeract", "getmarker",
-                       "spawn")
+                       "spawn", "teleport")
 SCRIPT_LIST_NODES = ("players", "list", "listremove", "listget", "listcount", "foreach", "findmarkers")
 SCRIPT_ITEM_NODES = ("list", "listget", "foreach")   # their "player" is a list entry: a marker for a markers list
 SCRIPT_OPERANDS = {"set": ("a",), "random": ("a", "b"), "math": ("a", "b"), "compare": ("a", "b"), "setvalue": ("a",),
@@ -312,6 +313,8 @@ def script_manifest(p, log=print):
             v = ref(n, "player", "marker" if marker else "player", "" if n["type"] == "enter" else "player")
             if v is not None:
                 e["player"] = v
+        if n["type"] == "teleport":   # its "player" is who, "marker" where
+            e["marker"] = ref(n, "marker", "marker", "spot")
         if n["type"] in SCRIPT_LIST_NODES:
             e["list"] = ref(n, "list", "markers" if of_markers else "list", "players")
         if n["type"] == "set":
