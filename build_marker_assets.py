@@ -114,7 +114,7 @@ def main():
     for prefix, kind, tag, key in jobs:
         arc = find_arc(auto, prefix, tag)
         common = os.path.join(os.path.dirname(os.path.dirname(auto)), "arcXmlTmpPC", "aPowerOn.arc")
-        if kind == "wp" and (not arc or os.path.getsize(arc) < 1024):
+        if kind in ("wp", "om") and (not arc or os.path.getsize(arc) < 1024):
             arc = common   # the model lives in the always-loaded archive (extracted below by its own folder only)
         if not arc or os.path.getsize(arc) < 1024:
             print(f"{key}: no archive / slot, skipped")
@@ -131,6 +131,11 @@ def main():
                     data = extract(common, tmp, own)
                     m2 = pick_model(data, kind, tag)
                     model = m2 if (m2 or "").lower().startswith(own) else model
+            if kind == "om" and not model and os.path.exists(common):
+                # the data post (om7100) keeps its model in the always-loaded aPowerOn archive
+                data = extract(common, tmp, own)
+                model = pick_model(data, kind, tag)
+                model = model if (model or "").lower().startswith(own) else None
             if not model:
                 print(f"{key}: no model in {os.path.basename(arc)}")
                 continue
@@ -172,8 +177,6 @@ def main():
             open(mtl, "w").writelines(lines)
             manifest[key] = os.path.join(key, leaf + ".obj")
             print(f"{key}: {model}")
-    if "om_7100" not in manifest and "om_7103" in manifest:  # uOm7100 has no model; the posts share om7103
-        manifest["om_7100"] = manifest["om_7103"]
     json.dump(manifest, open(os.path.join(out, "manifest.json"), "w"), indent=1)
     print(f"{len(manifest)} models -> {out}")
 

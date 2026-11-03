@@ -24,6 +24,30 @@ def stage_model(folder):
     raise SystemExit("no stage preview (.preview/stage): rebuild the preview")
 
 
+def project_collision(folder, kind="move", library=None, geometry=None):
+    """the project's collision groups as the export builds them (each triangle's owner in "own") -> (groups, note)"""
+    p = json.load(open(os.path.join(folder, "project.json")))
+    key = "lp1_" + kind
+    src = (p.get("collision") or {}).get(key)
+    if not src:
+        raise SystemExit(f"project.json has no collision.{key}")
+    groups = lp2col.read_sbc1(open(lp2project.path(folder, src), "rb").read())
+    gpath = geometry or (os.path.join(folder, p["geometry"]["file"]) if p.get("geometry") else None)
+    geo = lp2pieces.load_geometry(gpath) if gpath else {}
+    note = "as imported"
+    S = lp2pieces.read_stage(stage_model(folder))
+    per_mesh, n = lp2pieces.atoms(S)
+    groups, (mv, dr, cp) = lp2pieces.apply_collision(groups, S, per_mesh, n, geo)   # also each triangle's owner
+    if lp2pieces.edited(geo):
+        note = f"{mv} triangles moved, {dr} dropped, {cp} copied"
+        if library and lp2pieces.foreign_copies(geo):
+            groups += lp2pieces.foreign_collision(library, geo, key, folder)
+    if kind == "move":   # barrier volumes: movement only (lp2mapc.barrier_groups)
+        import lp2mapc
+        groups += [dict(g, own=[-1] * len(g["tris"])) for g in lp2mapc.barrier_groups(p)]
+    return groups, note
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("project")
@@ -33,22 +57,7 @@ def main():
     ap.add_argument("--geometry")
     a = ap.parse_args()
     folder = os.path.abspath(a.project)
-    p = json.load(open(os.path.join(folder, "project.json")))
-    key = "lp1_" + a.kind
-    src = (p.get("collision") or {}).get(key)
-    if not src:
-        raise SystemExit(f"project.json has no collision.{key}")
-    groups = lp2col.read_sbc1(open(lp2project.path(folder, src), "rb").read())
-    gpath = a.geometry or (os.path.join(folder, p["geometry"]["file"]) if p.get("geometry") else None)
-    geo = lp2pieces.load_geometry(gpath) if gpath else {}
-    note = "as imported"
-    S = lp2pieces.read_stage(stage_model(folder))
-    per_mesh, n = lp2pieces.atoms(S)
-    groups, (mv, dr, cp) = lp2pieces.apply_collision(groups, S, per_mesh, n, geo)   # also each triangle's owner
-    if lp2pieces.edited(geo):
-        note = f"{mv} triangles moved, {dr} dropped, {cp} copied"
-        if a.library and lp2pieces.foreign_copies(geo):
-            groups += lp2pieces.foreign_collision(a.library, geo, key, folder)
+    groups, note = project_collision(folder, a.kind, a.library, a.geometry)
     pos, surf, owner = [], [], []
     for g in groups:
         V = g["verts"]

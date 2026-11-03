@@ -352,6 +352,38 @@ def copy_meshes(S, per_mesh, copies):
     return out
 
 
+def dynamic_parts(geo):
+    """the pieces marked dynamic in the editor (tree node "dynamic"; a group's covers its members): lit by the bake
+    but casting no shadows -> (atoms, copy indices)"""
+    atoms_, copies = set(), set()
+
+    def walk(t, dyn):
+        dyn = dyn or bool(t.get("dynamic"))
+        for c in t.get("children") or []:
+            walk(c, dyn)
+        if dyn:
+            atoms_.update(int(a) for a in t.get("atoms") or [])
+            copies.update(int(k) for k in t.get("copies") or [])
+    for t in geo.get("tree") or []:
+        walk(t, False)
+    return atoms_, copies
+
+
+def dynamic_points(S, per_mesh, geo, lib, project=None):
+    """world positions (cm, (k, 3)) of the dynamic pieces' vertices in the built stage, for lp2bake.bake_stage to
+    find them by (its stage has no piece ids left): their own atoms where they are now, and their copies"""
+    atoms_, copies = dynamic_parts(geo)
+    I = [1.0, 0, 0, 0, 0, 1.0, 0, 0, 0, 0, 1.0, 0]
+    own = [dict(atom=a, m=(geo.get("xf") or {}).get(str(a), I)) for a in atoms_ if a not in set(geo.get("hidden") or [])]
+    cps = [c for k, c in enumerate(geo.get("copies") or []) if k in copies]
+    own += [c for c in cps if not c.get("map")]
+    out = [positions(m["verts"]) for m in copy_meshes(S, per_mesh, own)] if own else []
+    for rel in {c["map"] for c in cps if c.get("map")}:
+        F = read_stage(library_stage(lib, rel, project)[0])
+        out += [positions(m["verts"]) for m in copy_meshes(F, atoms(F)[0], [c for c in cps if c.get("map") == rel])]
+    return np.concatenate(out) if out else np.zeros((0, 3))
+
+
 def foreign_copies(geo):
     """{library map ("lp1/s900"): [copy]}: copies of pieces from other maps (the editor's asset library)"""
     out = {}

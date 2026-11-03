@@ -178,6 +178,11 @@ def write_geo(prev, S, per_mesh, n, tex_files, max_tex, log=print):
         TK.append(ta * nmat + m["mat"])
         base += len(v)
     P, N, U, C, VK, T, TK = map(np.concatenate, (P, N, U, C, VK, T, TK))
+    # every triangle counter-clockwise about its vertex normals (LP2's order), so the editor can cull back faces: PC LP1
+    # stages have whole pieces wound the other way, which the game draws double-sided
+    face = np.cross(P[T[:, 1]] - P[T[:, 0]], P[T[:, 2]] - P[T[:, 0]])
+    back = (face * N[T].sum(1)).sum(1) < 0
+    T[back] = T[back][:, [0, 2, 1]]
     vo = np.argsort(VK, kind="stable")
     newid = np.empty(len(vo), np.int64)
     newid[vo] = np.arange(len(vo))
@@ -223,7 +228,7 @@ def write_geo(prev, S, per_mesh, n, tex_files, max_tex, log=print):
                  texture_bytes=tex_bytes)
     lo, hi, _ = lp2pieces.atom_boxes(S, per_mesh, n)
     boxes = np.round(np.concatenate([lo, hi], 1) / 100.0, 4).ravel().tolist()  # per atom: min xyz, max xyz (m)
-    json.dump(dict(version=1, arrays=arrays, materials=mats, blocks=blocks, atom_box=boxes, tree=tree, stats=stats),
+    json.dump(dict(version=1, wind="ccw", arrays=arrays, materials=mats, blocks=blocks, atom_box=boxes, tree=tree, stats=stats),
               open(os.path.join(prev, "geo.json"), "w"), separators=(",", ":"))
     return stats
 

@@ -745,3 +745,204 @@ geometry.json), volumes = their marker name. On save -> project "script_tags" [{
 teleport, spawn, vector) works on them. Shared names = a group. Scripts window "Pick from level": the next click in
 the level adds a Get marker node (variable named after the object; auto-names stem_N if unnamed); a volume pops a menu
 (Get marker / Volume entered / Volume effects / Set volume value). Esc cancels.
+
+## 2026-11-02: animated objects - moving collision CONFIRMED (in-game, Steam DX11, Friction)
+- Friction movers: uOm8335 crushers (objset item 13699 = 0x3583), uOm8336 (13955), uOm8322 (8835); item = om id low
+  byte << 8 | 0x83 (om83xx). Crushers derive from uOmCompressionStep and start on a global flag bit
+  (*(DAT_018c080c+0x14744) bit [this+0xb78], DX9) - likely the campaign's networked switch flags; dt at +0x14810.
+- DevTools "mover_test": vtable slot 53 (update) of uOm8335/8336 (DX11 0x1584fb0 / 0x1586870, DX9 0x1574e80 /
+  0x1576740) and uOm8322 (DX11 0x157aa70, DX9 0x156a940) hooked; position at +0x30 (x y z cm) set before the original
+  update -> model AND collision follow (user tested: stood on / collided while bobbing 2.5 m). Matrices are built from
+  +0x30 in the update.
+- uOm updates run on several worker threads in parallel: per-object state must be thread-safe (the test's list raced).
+- Plan (user agreed to start): rigid node animation (glTF TRS tracks + empty "pointer" nodes) evaluated by the DLL;
+  each moving piece = a uOm-based object whose transform we set; host sends {object, frame at time T, speed} on
+  change, every machine evaluates; nodes play / stop / speed (+/-) / go to frame / on frame N / on finished;
+  attach = pin a synced spawned physics object to a pointer (physics off), detach = host sends pos + velocity.
+  Next: choose the carrier uOm class (one we can spawn with our own model + collision files), rotation field (+0x40?),
+  and how a placed om's model / collision paths can come from the map package.
+- rObjAdj (moving-object collision; crusher om8335, windmill om835a both have model + rMotionList + rObjAdj + rHit):
+  "OBJA", u32 version 0x20080625, u32 count, count x 88-byte rObjAdj::Node (rPlanetTree::Node base, DX9 read
+  0xfcd350 / 0xfc8520): +0 u8 kind (3 = box? min/max, 1 = capsule / sphere), +4 u32, +8 u64, +0x10 f32 x2, +0x18
+  f32 radius, +0x1c vec3 A, +0x28 vec3 B, (+0x34..+0x48 f32), +0x4c s32 joint (-1 = root), +0x50 u8 flag (+3 cd pad),
+  +0x54 u32. Crusher: box (±200, 60..600, ±53) joint -1 r30 + capsule (±170,60,0) r60 joint 0; windmill: kind 1
+  r30 joint 0 at origin. Field meanings inferred from values, not yet confirmed in cObjAdjTree code.
+- cObjAdj fields: mInitCalc mSleep mNum mUseNum mppNode mAdjVec mAdjVecOld mScrAdjVecOld mAdjNum mpOnTarget mpUnit
+  mpRes; cObjAdjTree::Node mType mTypeOld mWeight. mpOnTarget = what a character stands on (riding movers natively?).
+- Havok: uHavokUnit / uHavokModel, rHavokConstraintLayout + uHavokToolConstraint (native constraints: crane hook ->
+  crate?), rHavokLinkCollisionLayout. User: exploding barrels roll / knock over and look synced - find their om class
+  as the reference for synced physics props.
+- Physics drums: uOm864d / uOm864e (exploding, effect dmg_om860e_ikd_drum_explo; uOm860e = fire drum family):
+  rModel + rObjAdj + rHit + rHavokLinkCollisionLayout (tool\Havok\LinkCollision\om864d\om864d_1) - a Havok rigid
+  prop. Methods vf52 init, vf95 / vf96 (damage / explode). Net classes: cNetAct(Ak/Hm/Vs) cNetItem cNetWep
+  cNetPartsBreak cNetRule cNetGameManager cNetCtrl - no object class: drum physics probably runs per machine, with
+  only the hit / explosion networked (to confirm).
+- NATIVE PARENTING: uOm derives from uCharacterBase -> uCharacter, whose properties (uCharacter::vf3 0x99c260) include
+  mObjSetParentMyId, mObjSetParentId, mObjSetParentJnt (+ mMoveScrReset): an ObjSet-placed unit can follow another
+  placed unit's joint by id. Also uSynchroModel / uSynchroAdhesion / uSynchroPoint/SpotLight / LightShaft (MT
+  "synchro" units follow a parent joint) and strings mParentJoint, mJointOfs, mStreamJointAttach.
+  Next: find where rObjSet records feed mObjSetParent* (objset.py fields) and test parenting a stock object to a
+  crusher's joint in a map package.
+- ObjSet parenting decoded (DX9 spawner FUN_00f716c0, resolver FUN_00f742f0; record byte offsets):
+  MyId = u16 @+0x00 (group) << 16 | (u32 @+0x110 serial + 1000); ParentId (if u8 @+0x20 != 0) = u16 @+0x24 (group)
+  << 16 | (u32 @+0x28 serial + 1000); ParentJnt = u32 @+0x2C. Stored in uCharacter +0x1160 / +0x1164 / +0x1168; the
+  resolver (same spawn batch only) sets child uCoord +0x24 mpParent = parent unit, +0x28 mParentNo = joint.
+  uCoord (property names): +0x24 mpParent, +0x28 mParentNo, +0x30 mPos, +0x40 mQuat, +0x50 mScale (+ mParentFlags,
+  mOrder). Runtime attach / detach = write mpParent / mParentNo (+ convert pos).
+- Stock use: 56 of 17182 records in 411 objsets; ONLINE_05 *-02 layouts: VS items 213/214/215 parented to group-2
+  record 0 (kind 3 item 112 at 11208 1282 -16563) on joints 59-66; their pos is near the parent's WORLD position
+  (world -> local converted somewhere, or a parent flag mode: the parent_test, which writes a local offset, decides).
+- Crusher / windmill rModels have ONE joint (j0): the crush stroke / spin is joint 0's motion; rObjAdj box on the
+  root (-1), capsule on j0.
+- Motion: uCharacterBase::vf227 (vtable +0x38c) = set motion (id = bank << 8 | index into lists at +0xAC4 + bank*4,
+  layer, start frame f32 (clamped to the motion's length), blend, flags). uModel::Motion layer (0x100 bytes) at
+  uModel +0x290: +4 mMotionNo (u16), +8 mState, +0xA mAttr, +0xC mInterFrame, +0x10 mInterCount, +0x14 mBlend,
+  +0x20 mFrameMax?, +0x24 mLoopFrame, +0x28 mSpeed, +0x34 mInterCurve, +0xD0 mSequence (mFrame not placed: the
+  parent_test logs +0x18..+0x2c every 2 s). uModel::Joint (0x90): +0x20 mQuat, +0x30 mScale, +0x40 mTrans (FUN_004e7530
+  quat+trans -> matrix), + WorldMat; joint list pointer at unit +0x284 (logged).
+- Test pending (DevTools "parent_test", Steam copy on): first uOm8322 parented to the first Friction crusher j0 at
+  local (0, 650, 0) + crusher motion-layer log. Read: does it ride the press; which float is mFrame; speed value.
+- 2026-11-02 test map "Mover Lab" (testmap_movers.py -> Steam Maps/MoverLab.zip): stock Friction + Common group-3
+  records 35..43: windmill om835a (Desecration record, scale 0.01: its model is ~450 m across, collision only a
+  r30 hub capsule), 4 drums om860e (item 0x0e86 = the MP exploding drum, online 10 / 01 + campaign; model in
+  uOmfef2.arc, preload name "uOm860e"; uOm864d/e are NOT placed by any stock objset), and parented records:
+  40 om8322 -> crusher 24 j0 LOCAL (0,650,0); 41 om8322 -> crusher 25 j0 WORLD; 42 drum -> crusher 26 j0 WORLD;
+  43 om8322 -> windmill j0 LOCAL (0,20000,0). The objset trailer (u16 @0x12 = 512 + record count u32s, then
+  u16 @0x14 item types) is left stale, as lp2layout.py does. lp2mapc.stock_package now skips boot resources a
+  map lacks (online 09 has no MaterialSkipList; lp2pack.py still fails on it).
+- CONVEYORS: Friction's belts = uOmMovementFloor (objset item 0x2183 / om8321, 20 in Friction Common; preload
+  "uOmMovementFloor"), a push volume. Properties (vf3; DX11 +0x10): +0x2056 mIsSetParent (follows a parent unit at
+  +0x2058, copying its matrix), +0x2060 mMinPos, +0x2070 mMaxPos, +0x2080 mMovementVec, +0x2124 mDamageRatio,
+  +0x2128 mMovementPower; +0xba8 kind (<2 or 3 box test, 2 / 4 sphere radius +0xbac at +0x2130). Record mUserWork
+  e.g. (3781, 373, 13, 26, 90, 4, 0...) - size / power / yaw guesses; the pit record (4500, 3000, 100, 400, 0, 4,
+  1000). Update vtables DX9 0x15e1d28 / DX11 0x15f1e48, slot 53. DevTools "conveyor_test" (2026-11-02, Steam copy on):
+  logs each belt's fields, cycles stock / power 0 / vec negated every 5 s. Script node plan: Set conveyor (on/off,
+  speed, reverse), host broadcasts, every machine writes the fields. Belt visuals (scrolling texture) not found yet.
+- 2026-11-02 NEW EMPTY MAP: editor "New map..." (was "Import map from LP/LP2...") gains "Empty map (100 m ground)" ->
+  lp2project.py new: a 100 x 100 m plane of 5 m cells (grey blockout grid material "ground", built by lp2mesh as the
+  import "ground", its stage copied to assets/empty/stage as lp2_stage, its SBC1 as move + bullet), explicit layout
+  (per variant 16 starts ring 12 m, 8 per team at x -/+20 m, k30 / k31, 4 k40), kill floor -30 m, tag = 4 name
+  letters + crc. No physics file: lp2mapc now builds physics from the bullet collision (rebuild_physics(None, ...,
+  bullet=)) whenever lp1_physics is absent. Compile + preview checked (not in game). Found on the way: lp2mesh smooths
+  normals area-weighted across shared positions and takes the winding as given (CCW seen from outside = up).
+  Not synced to the lp2-mapedit release repo yet.
+- 2026-11-03 FIX (first Mover Lab run: no added objects; conveyor test did nothing):
+  - rObjSet trailer decoded (loader FUN_00fc88d0, spawner FUN_00f742f0): header u16 @0x08 = group 0 count (0x130-byte
+    records, unused by stock), then u32 x u16@0x12: 128 phase starts (indices into the same table), per phase [0, 0, n,
+    n x (group << 16 | index)], phase = record +0x04 (0/10/20); then u16@0x14 types {0, item >> 8, item & 0xff, kind}.
+    The game spawns ONLY listed records -> added records never appeared (also lp2layout's extra editor VS / weapons,
+    and removed records left stale ids). objset.reindex rebuilds it (1082 stock files byte-identical; skips files with
+    phase >= 128 (ONLINE_00 VS-00: 2022) or group 0). Used by testmap_movers.py and lp2layout.py (all three writers).
+  - Conveyor: update rebuilds min/max from mUserWork and mMovementVec = turn x (0,0,power), power = mMovementPower if
+    > 0 else mUserWork[5]; the test now writes the vector AFTER the update (push reads it later, FUN_00db0c90).
+  - README (xlive): "Steam and disc copies together (Spacewar)" section.
+- 2026-11-03 BAKE WITH PLACED PIECES + STATIC / DYNAMIC + LAZY UNWRAP (editor-tested on AZ-Tech copy, export bake checked, NOT in game):
+  - lp2bake.bake_preview bakes placed copies with a "map" (imports, library pieces; placed_copies) with the map:
+    occluders + receivers, detail-split; output .preview/bake_copies.json/.bin (per copy: map, atom, m, blocks; arrays
+    in the piece's space). geometry.gd draws a copy from it when copy_key(map, atom, m) matches (moved -> unbaked).
+    --library passed by lighting.gd. bake(occ=) / shadow_splits(occ=): per-vertex "casts shadows"; hidden atoms and
+    dynamic pieces 0. _Tracer handles an empty scene.
+  - Tree flag "dynamic" (lp2pieces.dynamic_parts; group covers members); outliner right-click Mark as static / dynamic
+    + inspector box. Export: lp2pieces.dynamic_points -> bake_stage(dynamic=) matches stage vertices by position (cm).
+  - lp2mesh import.json "unwrap" (rebuild --unwrap M): grid_uvs regardless of material; kept on re-import.
+
+## ROADMAP (user, 2026-11-03): custom game modes via visual scripting (later)
+Viable: the script runtime (host-authoritative, vars / lists / player actions / volumes / markers / spawn) + rules.cpp
+(Survival) are most of a mode engine. Missing hooks (RE, DX9 + DX11 + retail):
+1. Score + round end: add score (player / team), read scores, end round with a winner (game manager; Survival's
+   last-standing code as the lead).
+2. On-screen messages (uBattleMessage blocker; fallback: our own overlay text).
+3. Respawn control: block / delay / pick spawn point (Survival has part).
+4. Events: player killed (killer, victim, weapon), spawned, round start.
+5. Teams: read, ideally assign / swap (infection).
+6. A mode sits on a stock base mode (Elimination / Team) with its scoring overridden, as rules.cpp does.
+Distribution: ".lp2mode" package (graph JSON, name, description, base mode, strings, min DLL version); Create Match
+"Mode" row; lobby download like maps; Modes\ folder + editor Install. Data only (fixed node set, run caps): safe to
+share. First test modes: King of the Hill, Infection. Order: score / round end + kill event first.
+
+## NEXT (user, 2026-11-03), in order
+1. Navmesh in the editor: build (lp2navgen.py) from the project's movement collision, show it, save it with the
+   project / package ("navmesh": true). Limited to the playable area (user): keep only the walkable regions
+   reachable from the spawn points, above the kill floor, outside out-of-bounds / kill volumes (no roofs, outside
+   ledges, sealed rooms). Generate the RADAR from the navmesh too (user; see Feature plan 8, 2026-10-27).
+   Radar facts so far: per map 5 floor images flash\cockpit\mapdds\RADER_MAP_7_00_ONLINE00_{1..5}_ID_HQ
+   (rTexture, 262168 B: 512 x 512 DXT5 + header) in aArea_ONLINE_NN.arc, the radar Flash
+   flash\cockpit\radermap\rader_map_7_00, floor changes by rAreaHitLayout zones (map 00's AreaHit). Custom maps:
+   lp2mapc blanks the images now. To find: the world -> radar transform (bounds / scale: Flash or exe table), how a
+   zone picks the floor. Plan: render the navmesh top-down in the stock style (walkable fill, edges, height shading),
+   floors = navmesh height bands (or editor-drawn floor volumes) -> one image + AreaHit zone each; editor preview.
+   DONE 2026-11-03 (editor side): lp2navmap.py PROJECT [--library] (playable area: union-find regions over shared
+   edges + ledges <=100 cm across / <=300 cm up-down, seeded by every set's markers; kill floor; kill volumes) ->
+   assets/nav/List_<tag>.rAINavigationMeshList + Way_<tag>.rAIWayPoint, .preview/navmesh.bin/json, project.json
+   "navmesh". Editor navmesh.gd (N): build, overlay by floor, dropped in red, radar floor planes project.json
+   radar.floors (cm, <=8 = 9 floors like ONLINE_08; 'above this, up to the next'). AZ: 447 of 496 polys kept. TODO: package into the map
+   (bot area clone), radar images from it.
+   Fix 2026-11-03: lp2navgen inside-solid test dropped big polygons on sloped / stepped roofs (centroid under the
+   roof's own surface). Now: snap verts first, drop only if centroid AND >=2 corners are inside. AZ: 0 dropped (was
+   32), 481 polys kept; ONLINE_12 hollow blocks still dropped (155 vs 157).
+   2026-11-03 (user): reachability must include the grapple. Grapple reach = 1100 cm (uWp00 mRange +0x224c, set
+   in its ctor DX9 0xc76690 from float 0x1379eb4 = 1100.0; vf379 returns it; the aim ray origin + forward * range,
+   i.e. the green crosshair). lp2navmap regions: jumps / drops (<=100 cm across, <=300 cm up/down) + grapple (open
+   edge to open edge, from 150 cm up to the higher lip, <=1100 cm, clear line through the collision, up to 40 tries
+   per region pair). AZ: all 557 polys kept (the 4 roofs; one is 12.3 m over the floor = 10.8 m from aim height).
+   Slopes (user screenshot): Recast polygons cut across slope folds / float -> navgen 'detail' mode (default): the
+   detail mesh's triangles, verts welded by position. AZ 557 polys -> 1438 tris; ONLINE_12 698 tris, 155 hollow-block
+   drops as before. Editor: overlay lifted 20 cm; opening a floating window closes the others (main.gd tool_windows).
+   Idea (user): grapple range as a match rule + air grappling (Settings 4 page). Range = uWp00 +0x224c per weapon
+   (ctor 0xc76690); air grapple: find the fire gate (RE). Navmesh reach should then use the map's max range.
+   RADAR RENDER RULES (user, 2026-11-03): (1) outline wherever walkable ground ends: open navmesh edges, incl. two
+   sections whose edges coincide in x/z but differ in height (a step / ledge not walkable) -> line, both sides filled
+   walkable; edges shared in the mesh get no line. (2) ramps crossing a floor plane: no hard cut / outline at the
+   plane; drawn on both floors, fading out over a few m past the plane each way, height-shaded to show the direction.
+   Map limits volumes (2026-11-03): volume effect "limits": true (no game effect; Add volume > Map limits). Any number,
+   plus extra boxes, union = the playable space. lp2navmap keeps only polys inside one (AZ test: 1230 of 1438).
+   Radar zones use them (lp2radar.zone_boxes).
+   Navmesh cleanup (user screenshots 2026-11-03): (1) lp2navgen.snap_corners: Recast gives a corner the highest
+   walkable span's height, so floor corners at a ledge foot sat on the ledge (101 near-vertical triangles on AZ: spikes,
+   jagged edges, wedges counted on the floor above) -> per triangle, corners snapped to the collision surface nearest
+   its median height (<= 300 cm), re-welded: 16 left. (2) AGENT radius 0 -> 40 cm: held back from walls / edges,
+   strips < 80 cm (wall tops) gone; lp2navmap LEDGE_GAP = 100 + 2 x radius. (The navtest ONLINE_12 mesh was built
+   with radius 0 like stock.) User's AZ: Map limits box top -10.3 m cut every roof (788 dropped) - box too short.
+- RADAR RE (2026-11-03, DX9; all confirmed against stock ONLINE_00):
+  - Table DX9 0x17d3cb0, 24 B entries until id 0xffff: u16 area id (cat << 8 | num: 0x700 + NN = ONLINE_NN), f32 zoom
+    (2.0; ONLINE_03 3.2, ONLINE_09 3.8), f32, f32, char* Flash name (rader_map_7_NN), f32 rotation deg (0 online).
+    Loader FUN_00ec8700: loads flash\cockpit\radermap\<name> (mcRader.loadMapMovie); area._x/_yscale = zoom/base*100
+    only when zoom != base (base 2.0; 3.5 for 0x708, 5.5 for 0x70b / 0x70f).
+  - Per frame FUN_00ecd920: map clip pos = (int)(player x * zoom * -0.01), (int)(player z * zoom * -0.01) (cm in);
+    ONLINE_10 only: + (-1508, +5460). Rotation = player heading + table rotation (setMapRotPos).
+  - Floor: radar +0x1be4 byte -> mcRader.setMapType(n) = raderMap.area frame (FUN_00ebd1c0). Set ONLY by area-hit
+    zones (FUN_007c8d50: zone flags +0x74 bit 0x1000 -> FUN_007c8190 writes zone byte +0xf2 for the local player);
+    reset to 0 only at load. So a floor sticks until another zone fires: custom maps should tile the whole space with
+    zones (one per floor band x Map limits box, floor 0 too).
+  - rAreaHitLayout (xfsedit): mpLayoutInfoList entries, SHAPE 1 (4-corner prism: p->mSetPos0..3 vec4 x / z corners,
+    p->mPosY bottom, p->mHeight), SUCCESS 4096 (0x1000), "RADER MAP CHANGE" = floor. ONLINE_00: 32 zones, floors 1-4,
+    floor 0 = outside them.
+  - rader_map_7_00 (GFX = uncompressed SWF): tags 1001 (external image: id, fmt 14 DDS, 512 x 512, name) ids 1..5 =
+    RADER_MAP_7_00_ONLINE00_5.._1_ID_HQ, 5 frames placing shapes 6..10 at the clip origin. Shape 6 fill = bitmap 5
+    (_1) with matrix scale x 1.0, y 1.0469 (512 px -> 536 units), translate (-256, -250). Frame k+1 = floor k = image
+    _(k+1).
+  - => world (x, z) cm -> image pixel: px = x / 50 + 256, py = (z / 50 + 250) / 1.0469 (zoom 2). Coverage x +-128 m,
+    z -125..+143 m. Checked: ONLINE_00's collision drawn with it lands on its radar image exactly (no mirroring).
+    Bigger maps: our own zoom (table / hook) or a scaled swf.
+  - Style (stock _1.._5): whole map on every floor; the floor's own area bright green (~#55a055) with a light green
+    outline, the others dim (~#3d5c3d) with faint outlines; map edge magenta-ish; alpha outside.
+  - BUILT (2026-11-03): lp2radar.py (floor images from .preview/navmesh.bin + radar.floors: dim whole map, own band
+    bright, open-edge outlines, ramps fade FADE 300 cm along the mesh past a plane; own movie: one frame / external
+    image / bitmap-filled square per floor over the navmesh footprint + 10 m, so any map size (1024 px over 400 m);
+    rArchive (jamcrc names, stock order irrelevant), rTexture 0x2a DXT5 1 mip; zones = floor bands x Map limits boxes
+    (else footprint), stock zone cloned, both arcs). lp2mapc.strip_base puts them in (images past stock's 5 via
+    arcput --add, unused stock images blanked); no navmesh = blank radar as before. Editor: Navmesh window "Preview
+    radar". Checked offline (AZ: 3 floors; 7-floor test); IN-GAME TEST PENDING. Not done: magenta map edge,
+    height shading on ramps.
+- ROADMAP (user, 2026-11-03): JAGGY BAKED SHADOWS. Shadow edges on floors are stepped (AZ-Tech whitebox: wall shadow
+  on the orange floor). Cause: lp2bake lights per vertex; shadow_splits subdivides triangles, so an edge follows the
+  split grid and Gouraud steps along it. Options: (a) clip triangles along the shadow boundary (edge-aligned
+  splits), (b) finer splits near edges only, (c) a real lightmap (texture-space bake: needs a 2nd UV set / lightmap
+  texture the stage shader can use - check the game's stage material for a lightmap slot), (d) soft shadows (area
+  sun, several rays) so steps blur. Look at (c) first: it also fixes light bleeding.
+2. In-game test of a navmesh + the new bots (per-mode brains, personalities; Mods/bots, Mods/navtest).
+3. Publish: editor release (v0.7.0: bake with placed pieces, static / dynamic, lazy unwrap, viewport menu,
+   objset spawn-list fix) + xlive release with the upgraded AI / Bot Match work.
+- 2026-11-03: Place tool gains "Data post" (marker {kind 3, role object, model om7101}; lp2layout.patch_objset clones
+  the base map's post record per Data Post layout). Export checked: all 8 Datapost objsets carry it, spawn lists
+  rebuilt. Empty maps had NO posts in Data Post before this. Q (Quick place) already worked on posts.

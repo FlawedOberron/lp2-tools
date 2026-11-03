@@ -1,6 +1,7 @@
 // Recast navmesh for lp2navgen.py: triangle soup in, triangle polygons out (max 3 verts per polygon, so each
 // polygon is one LNV triangle). Units are LP2's (cm, Y up).
-//   navgen IN.bin OUT.bin cs ch height radius climb slope
+//   navgen IN.bin OUT.bin cs ch height radius climb slope [detail]
+// detail: the detail mesh's triangles instead (they follow slopes and folds), neighbours all -1
 // IN:  u32 nv, u32 nt, nv x 3f, nt x 3i
 // OUT: u32 nv, u32 np, nv x 3f (cm), np x 3i (vertex ids), np x 3i (neighbour polygon per edge, -1 none)
 #include "Recast.h"
@@ -8,12 +9,14 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <map>
+#include <tuple>
 #include <vector>
 
 int main(int argc, char** argv)
 {
 	if (argc < 9) {
-		fprintf(stderr, "usage: navgen IN OUT cs ch height radius climb slope\n");
+		fprintf(stderr, "usage: navgen IN OUT cs ch height radius climb slope [detail]\n");
 		return 2;
 	}
 	FILE* f = fopen(argv[1], "rb");
@@ -90,6 +93,46 @@ int main(int argc, char** argv)
 				seen[poly[k]] = 1;
 			}
 		}
+	}
+	if (argc > 9 && !strcmp(argv[9], "detail")) {
+		// the detail mesh's triangles (they follow the surface: sample points where the polygon strays more than
+		// detailSampleMaxError from it), vertices welded by position so neighbouring triangles share edges;
+		// neighbours all -1 (the caller links by shared edges)
+		std::map<std::tuple<int, int, int>, int> weld;
+		std::vector<float> dv;
+		std::vector<int> dt;
+		for (int p = 0; p < pm->npolys; p++) {
+			const unsigned* m = &dm->meshes[p * 4];
+			int idx[256];
+			for (unsigned k = 0; k < m[1] && k < 256; k++) {
+				const float* q = &dm->verts[(m[0] + k) * 3];
+				auto key = std::make_tuple((int)lroundf(q[0] * 10), (int)lroundf(q[1] * 2), (int)lroundf(q[2] * 10));
+				auto it = weld.find(key);
+				if (it == weld.end()) {
+					it = weld.emplace(key, (int)(dv.size() / 3)).first;
+					dv.insert(dv.end(), q, q + 3);
+				}
+				idx[k] = it->second;
+			}
+			for (unsigned t = 0; t < m[3]; t++) {
+				const unsigned char* tr = &dm->tris[(m[2] + t) * 4];
+				int a = idx[tr[0]], b = idx[tr[1]], c = idx[tr[2]];
+				if (a == b || b == c || a == c)
+					continue;
+				dt.push_back(a), dt.push_back(b), dt.push_back(c);
+			}
+		}
+		f = fopen(argv[2], "wb");
+		unsigned onv = dv.size() / 3, onp = dt.size() / 3;
+		fwrite(&onv, 4, 1, f);
+		fwrite(&onp, 4, 1, f);
+		fwrite(dv.data(), 4, dv.size(), f);
+		fwrite(dt.data(), 4, dt.size(), f);
+		std::vector<int> none(dt.size(), -1);
+		fwrite(none.data(), 4, none.size(), f);
+		fclose(f);
+		fprintf(stderr, "grid %d x %d, %d polys -> %u detail verts, %u triangles\n", c.width, c.height, pm->npolys, onv, onp);
+		return 0;
 	}
 	f = fopen(argv[2], "wb");
 	unsigned onv = pm->nverts, onp = pm->npolys;

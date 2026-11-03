@@ -192,3 +192,18 @@ uIdBattle / SprLayout ranking00) -> lives left / ELIMINATED red, FFA first; 2 te
   throttled). Look at: the per-packet size / send rate cap in the transfer, compressing (rTextures dominate;
   zlib / shared DXT), sending several chunks in flight, skipping what the peer already has (hash cache),
   and starting transfers as soon as a player joins instead of on demand.
+
+## Roadmap (user, 2026-11-03): grapple rules, Settings 4, bigger stored settings
+- **Grapple range** match rule. Range = uWp00 mRange +0x224c (DX9; +0x10 DX11 to check), set to 1100.0 in the ctor
+  (DX9 0xc76690, float 0x1379eb4); vf379 returns it, and the aim ray (green crosshair) uses it. Set it per spawned
+  grapple from the host's rule (synced like the other rules bytes). Bots and navmesh: lp2navmap GRAPPLE should take
+  the longest range a map may be played with.
+- **Grapple in the air** match rule. RE: find the gate that refuses to fire the anchor while airborne (cPlayer
+  mAnchorStatus / uWp00 vf41 checks FUN_00c76a10, FUN_00f7f420, FUN_00f7f740(this, 3), FUN_00c77220), and test the
+  animation states it lands in.
+- **Settings 4** page in Create Match: Settings 3 has room for only 3 more rows (before PCCROSS). A 4th page = a new
+  Flash sub page + row table entry (the pages are Flash sub1 / sub2 under the main page; see RE progress 2).
+- **Bigger stored game settings** (saving / loading match settings): our rules live in the free rules bytes
+  0x31-0x37 (7 left; 0x2e-0x30 used), DataNo 78-127 free. More rules need more room: grow the stored settings block
+  (or keep our own block beside it in our settings file / save sidecar) so saved presets keep every rule, and check
+  FUN_00829180 (rules bytes -> session ints sent to clients) carries the extra ones.

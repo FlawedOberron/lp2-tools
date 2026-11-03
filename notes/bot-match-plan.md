@@ -253,3 +253,22 @@ Bot Match screen RE (not built; next session, needs in-game iteration):
   0x64-byte setup block: find where the system-link start converts it (watch setup+0x28 writes after Create).
   - UX option with less Flash work: a create-screen row "Match: Online / Bots (offline)". On Create with
     Bots, call the start above instead of creating the session, plus a Bots row (count) and the existing rows.
+
+## Grapple for bots (2026-11-03, user: bots drive like a pad, so they should grapple like players)
+- Grapple = weapon uWp00, reach 1100 cm (map-editor-plan.md, navmesh). Pad action 10 = anchor (Controls plugin
+  table: "grapple" id 10, <ACT_ANCHOR>); brains press pad actions through cAIPlanMoveHmAction (appeal = 26).
+- To try: a HumanBotBt node pressing action 10 while aimed at an anchor point; the navmesh then needs grapple
+  links (from-point, anchor point, landing region) that lp2navmap already finds (regions joined by the grapple).
+- No stock human AI grapples that we know of (only uAk13 has mAnchorCmd).
+
+## Bot rows on AI Enemy Battle (2026-11-03, built + installed, IN-GAME TEST PENDING)
+- botrows.as generalised: items 2-8 cloned from Game Type; lp2BotRow(n, label, value) + lp2BotOrder("4,0,1,...")
+  lays the shown rows out from one gap above Map (hidden Survival / Respawns leave no gap).
+- New rows: Difficulty (Easy/Normal/Hard/Veteran: x0.6/1/1.3/1.6 on attacker, quickness, grenade, impatient,
+  calm divided), Brain (Stock/Improved: ThinkSet skips our per-mode brains), Personality (Mixed or one archetype
+  for all), Taunts (Off/Rare/Normal/Lots: x0/0.4/1/2 on the archetype's chance). rules.cpp BotMenuOptions() ->
+  bots.cpp. Applied as each bot is first evaluated (so per match). Watch: 9 rows may overflow the panel; mouse ids
+  BOT_MENU1+5..8 (0x233-0x236) unverified.
+- Next: System Link "Bot Match" (create screen row Match: Online / Bots -> start the bot area, RE A1-A3).
+- Stage 2 idea: networked bots as campaign-style NPC soldiers (co-op already syncs host-run AI enemies), not
+  as players (no scoreboard slot); research whether a versus area can host them.

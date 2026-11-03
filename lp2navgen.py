@@ -30,11 +30,14 @@ import lp2nav
 import sbc
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-NAVGEN = os.path.join(HERE, "navgen", "navgen")
+NAVGEN = os.path.join(HERE, "navgen", "navgen.exe" if os.name == "nt" else "navgen")
 # Recast settings (cm): cell, cell height, agent height, radius, step, slope (degrees)
-AGENT = dict(cs=20.0, ch=5.0, height=180.0, radius=0.0, climb=55.0, slope=50.0)
+# radius: the navmesh keeps this far (cm) from walls and edges, so strips narrower than twice it (wall tops, railings)
+# go. Stock training meshes use 0; 40 for ours (user, 2026-11-03: no thin strips, not pushed into walls)
+AGENT = dict(cs=20.0, ch=5.0, height=180.0, radius=40.0, climb=55.0, slope=50.0)
 LEAF = 4000.0        # area leaf box size (cm)
 WAY_STEP = 300.0     # waypoint grid (cm)
+SNAP_REACH = 300.0   # snap_corners: a corner moves to a surface at most this far from its triangle's middle height
 
 
 def collision_mesh(path):
@@ -55,9 +58,11 @@ def collision_mesh(path):
     return verts, tris
 
 
-def recast(verts, tris, agent=AGENT):
+def recast(verts, tris, agent=AGENT, detail=True):
     """Recast with Recast's own winding: it counts a triangle walkable when (v1 - v0) x (v2 - v0) points up... in its
-    left-handed sense, so the triangles go in reversed when floors come out unwalkable (checked by the caller)"""
+    left-handed sense, so the triangles go in reversed when floors come out unwalkable (checked by the caller).
+    detail: Recast's detail triangles (on the surface across slopes and folds) instead of its polygons, whose
+    straight edges cut through a slope's fold or float over it"""
     with tempfile.TemporaryDirectory() as d:
         src, dst = os.path.join(d, "in.bin"), os.path.join(d, "out.bin")
         with open(src, "wb") as f:
@@ -65,7 +70,8 @@ def recast(verts, tris, agent=AGENT):
             f.write(verts.astype("<f4").tobytes())
             f.write(tris.astype("<i4").tobytes())
         a = agent
-        r = subprocess.run([NAVGEN, src, dst] + [str(a[k]) for k in ("cs", "ch", "height", "radius", "climb", "slope")],
+        r = subprocess.run([NAVGEN, src, dst] + [str(a[k]) for k in ("cs", "ch", "height", "radius", "climb", "slope")]
+                           + (["detail"] if detail else []),
                            capture_output=True, text=True)
         if r.returncode:
             raise RuntimeError("navgen failed: " + r.stderr)
@@ -266,40 +272,74 @@ def build_way(verts, tris, nv, npolys):
             "tree": {"depth": 5, "box": [float(c) for c in list(mx) + list(mn)], "cells": cells}}
 
 
-def build(outdir, name, cols):
-    parts = [collision_mesh(c) for c in cols]
-    verts = np.concatenate([v for v, _ in parts])
-    base = np.cumsum([0] + [len(v) for v, _ in parts[:-1]])
-    tris = np.concatenate([t + b for (_, t), b in zip(parts, base)])
-    v, p, _, log = recast(verts, tris)
+def snap_corners(verts, tris, v, p):
+    """each triangle's corners onto the collision surface nearest the triangle's middle height, then corners at the
+    same place joined again -> v, p. Recast gives a corner the height of the highest walkable span around it, so a
+    floor corner at the foot of a ledge sits on the ledge's top: spikes and wedges up the wall, jagged floor edges"""
+    surf = surface_points(verts, tris, [(x, z) for x, _, z in v])
+    T = v[p].copy()
+    for t in range(len(p)):
+        ref = float(np.median(T[t, :, 1]))
+        for k in range(3):
+            ys = surf[p[t, k]]
+            if ys:
+                y = min(ys, key=lambda q: abs(q - ref))
+                if abs(y - ref) < SNAP_REACH:
+                    T[t, k, 1] = y
+    flat = T.reshape(-1, 3)
+    key = np.round(flat * [10, 2, 10]).astype(np.int64)   # 1 mm across, 5 mm up
+    _, first, inv = np.unique(key, axis=0, return_index=True, return_inverse=True)
+    p = inv.reshape(-1, 3)
+    ok = (p[:, 0] != p[:, 1]) & (p[:, 1] != p[:, 2]) & (p[:, 0] != p[:, 2])
+    return flat[first], p[ok]
+
+
+def generate(verts, tris, log=print):
+    """the walkable surface of a collision mesh (cm): Recast, minus polygons inside solid pieces, heights snapped
+    onto the collision -> v (n, 3), p (m, 3) triangles"""
+    v, p, _, rlog = recast(verts, tris)
     if len(p) == 0:   # wound the other way for Recast
-        v, p, _, log = recast(verts, tris[:, [0, 2, 1]])
-    print("recast:", log)
-    cen = v[p].mean(axis=1)
-    keep = ~inside_solid(verts, tris, cen)
+        v, p, _, rlog = recast(verts, tris[:, [0, 2, 1]])
+    log("recast: " + rlog)
+    v, p = snap_corners(verts, tris, v, p)
+    # inside a solid piece: the centre and at least 2 corners (on the surface after snapping). The centre alone
+    # misreads big polygons over sloped or stepped roofs, whose middle lies under the roof's own surface
+    vin = inside_solid(verts, tris, v)
+    keep = ~(inside_solid(verts, tris, v[p].mean(axis=1)) & (vin[p].sum(axis=1) >= 2))
     p = p[keep]
     used = np.unique(p)
     remap = np.full(len(v), -1)
     remap[used] = np.arange(len(used))
     v, p = v[used], remap[p]
-    print("dropped %d polygons inside solid pieces" % (~keep).sum())
-    for i, ys in enumerate(surface_points(verts, tris, [(x, z) for x, _, z in v])):
-        near = [y for y in ys if abs(y - v[i, 1]) < 3 * AGENT["ch"]]
-        if near:   # onto the collision (Recast's heights are voxel tops)
-            v[i, 1] = min(near, key=lambda y: abs(y - v[i, 1]))
-    meshes = build_lnv(v, p.astype(np.int64), name)
+    log("dropped %d polygons inside solid pieces" % (~keep).sum())
+    return v, p.astype(np.int64)
+
+
+def write(outdir, name, v, p, verts, tris, log=print):
+    """List_NAME.rAINavigationMeshList + Way_NAME.rAIWayPoint in outdir (waypoints checked against the collision
+    verts / tris) -> the LNV's path"""
+    meshes = build_lnv(v, p, name)
     os.makedirs(outdir, exist_ok=True)
     out = os.path.join(outdir, "List_%s.rAINavigationMeshList" % name)
     open(out, "wb").write(lp2nav.write_lnv(meshes))
     way = build_way(verts, tris, v, p)
     wout = os.path.join(outdir, "Way_%s.rAIWayPoint" % name)
     open(wout, "wb").write(lp2nav.write_way(way))
-    print("%s: %d points, %d with a blocked direction" % (wout, len(way["points"]),
-                                                         sum(q["a"][0] != 0xFFFFFFFF for q in way["points"])))
+    log("%s: %d points, %d with a blocked direction" % (wout, len(way["points"]),
+                                                       sum(q["a"][0] != 0xFFFFFFFF for q in way["points"])))
     m = meshes[0]
-    print("%s: %d verts, %d polys, %d links, %d leaf areas" % (out, len(m["verts"]), len(m["polys"]), m["counts"][0],
-                                                              m["area_tail"][0]))
+    log("%s: %d verts, %d polys, %d links, %d leaf areas" % (out, len(m["verts"]), len(m["polys"]), m["counts"][0],
+                                                            m["area_tail"][0]))
     return out
+
+
+def build(outdir, name, cols):
+    parts = [collision_mesh(c) for c in cols]
+    verts = np.concatenate([v for v, _ in parts])
+    base = np.cumsum([0] + [len(v) for v, _ in parts[:-1]])
+    tris = np.concatenate([t + b for (_, t), b in zip(parts, base)])
+    v, p = generate(verts, tris)
+    return write(outdir, name, v, p, verts, tris)
 
 
 def main(argv):

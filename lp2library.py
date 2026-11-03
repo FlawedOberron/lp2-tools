@@ -265,8 +265,11 @@ def get(a):
     have = os.path.join(raw, "manifest.json")
     none = os.path.join(raw, "no_model.json")   # keys the game has no model for: not ripped again
     skip = set(json.load(open(none))) if os.path.exists(none) and not a.force else set()
+    got = json.load(open(have)) if os.path.exists(have) else {}
+    stand_in = [k for k in ("om_7100",) if str(got.get(k, "")).startswith("om_7103")]   # libraries before 2026-11-03:
+    skip -= set(stand_in)                                                              # the post showed om7103
     missing = [] if a.force or not os.path.exists(have) else \
-        sorted(set(lp2_names()) - set(json.load(open(have))) - skip)
+        sorted(set(lp2_names()) - (set(got) - set(stand_in)) - skip)
     if a.force or not os.path.exists(have) or missing:
         # a library from an older version: rip only the models it lacks (build_marker_assets.py KEY ...)
         progress(0.0, "Ripping LP2 models (VS, weapons, posts)")
@@ -284,7 +287,7 @@ def get(a):
     for i, key in enumerate(keys):
         progress(0.5 + 0.5 * i / len(keys), f"Converting {key}")
         dst = os.path.join(lib, "lp2", key + ".glb")
-        if a.force or stale or not os.path.exists(dst):
+        if a.force or stale or key in missing or not os.path.exists(dst):
             meshes, tex = read_obj(os.path.join(raw, manifest[key]))
             size = write_glb(dst, meshes, tex)
         else:

@@ -162,6 +162,26 @@ def kill_top(corners, y):
     return dict(verts=verts, tris=[(t, KILL) for t in tris])
 
 
+PLAIN = 0x3FFFFF00   # a triangle flag: the template's plain surface (write_lp2)
+
+
+def box(corners, y0, y1):
+    """a closed box (12 triangles, normals out, plain surface) over 4 x / z corners from y0 to y1 (cm): a barrier"""
+    verts = [(x, y0, z) for x, z in corners] + [(x, y1, z) for x, z in corners]
+    c = [sum(v[i] for v in verts) / 8 for i in range(3)]
+    quads = [(0, 1, 2, 3), (4, 5, 6, 7), (0, 1, 5, 4), (1, 2, 6, 5), (2, 3, 7, 6), (3, 0, 4, 7)]
+    tris = []
+    for q in quads:
+        for t in ((q[0], q[1], q[2]), (q[0], q[2], q[3])):
+            p = [verts[i] for i in t]
+            e1 = [p[1][i] - p[0][i] for i in range(3)]
+            e2 = [p[2][i] - p[0][i] for i in range(3)]
+            n = (e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0])
+            out = sum(n[i] * (p[0][i] - c[i]) for i in range(3)) > 0
+            tris.append((t if out else (t[0], t[2], t[1]), PLAIN))
+    return dict(verts=verts, tris=tris)
+
+
 def write_lp2(groups, template):
     if template[:4] != b"SBC\xff":
         raise ValueError("template is not an LP2 rCollision")

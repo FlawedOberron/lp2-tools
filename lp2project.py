@@ -3,6 +3,7 @@
 
   lp2project.py import-lp1 sNNN.arc OUT_DIR --name "Area 921" [--tag T] [--size S] [--layout JSON] [--exclude TEXT] [--game LP2_DIR]
   lp2project.py import-lp2 NN OUT_DIR --name "Kraftwerk edit" --game LP2_DIR --library LIB [--tag T] [--size S]
+  lp2project.py new OUT_DIR --name "Arena" --game LP2_DIR [--tag T] [--size S] [--ground M]
   lp2project.py check PROJECT_DIR
 
 A project is a folder: project.json + layout.json + assets/. lp2mapc.py compiles it to a Maps\\*.zip package.
@@ -18,7 +19,8 @@ project.json (format "lp2map", version 1):
                -> vertex colour), light_balance (0..1, default 1: the baked light's colour cast removed, its
                average made grey), exclude: name parts left out
   collision    lp1_move / lp1_bullet (LP1 atari / tama), lp1_physics (LP1 havok packfile) or lp2_physics (an LP2 map's own rHkCollision),
-               rebuild_physics (true: the physics follows edited pieces, new MOPP tree; lp2mopp.py)
+               rebuild_physics (true: the physics follows edited pieces, new MOPP tree; lp2mopp.py); neither physics
+               file (a new empty map): the physics is built from the bullet collision with the pieces' edits
   layout       layout.json (blender_lp2_map_markers.py / lp1points.py format: sets of points + objects per
                layout variant); lift: true puts markers onto the floor at compile time (LP1 markers sit low)
   geometry     optional: {file: geometry.json}, the editor's level geometry edits (lp2pieces.py: moved,
@@ -188,6 +190,67 @@ def import_lp2(num, out, name, game, library, tag=None, size="large"):
     return p
 
 
+def new_empty(out, name, game, tag=None, size="medium", ground=100.0):
+    """A new empty map: a flat ground (ground x ground m at y 0, 5 m cells, a grey blockout grid) as its
+    stage and collision, made by the mesh builder (lp2mesh.py: also kept as the import "ground", placeable again),
+    physics from the bullet collision (lp2mapc), and spawns only: per layout variant 16 FFA starts in a 12 m ring,
+    8 per team 20 m either side, the team modes' two k30 / k31 points and 4 k40 points (no VS, pickups or posts)."""
+    import math, tempfile, zlib
+    if not tag:
+        stem = "".join(c for c in name.lower() if c.isalnum())[:4] or "map"
+        tag = (stem + "%08x" % zlib.crc32(f"{name} {os.path.abspath(out)}".encode()))[:8]
+    if len(tag) != 8:
+        raise SystemExit("--tag must be 8 characters (it replaces 'online00')")
+    os.makedirs(out, exist_ok=True)
+    # a plane of 5 m cells (vertex light: the bake's shadows need the vertices), wound counter-clockwise seen from above
+    n = max(1, round(ground / 5))
+    h, step = ground / 2, ground / n
+    obj = os.path.join(tempfile.mkdtemp(), "ground.obj")
+    with open(obj, "w") as f:
+        for j in range(n + 1):
+            for i in range(n + 1):
+                f.write("v %g 0 %g\n" % (-h + i * step, -h + j * step))
+        for j in range(n):
+            for i in range(n):
+                v = 1 + j * (n + 1) + i
+                f.write("f %d %d %d\nf %d %d %d\n" % (v, v + n + 1, v + n + 2, v, v + n + 2, v + 1))
+    mesh = os.path.join(HERE, "lp2mesh.py")
+    for args in (["material", "--game", game, out, "ground", "--colour", "0.55,0.55,0.55", "--blockout"],
+                 ["import", "--game", game, out, obj, "--name", "ground", "--collision", "mesh"]):
+        r = subprocess.run([sys.executable, mesh] + args, capture_output=True, text=True)
+        if r.returncode:
+            raise SystemExit(f"lp2mesh.py {args[0]} failed:\n{r.stdout}{r.stderr}")
+    imp = os.path.join(out, "imports", "ground")
+    dst = os.path.join(out, "assets", "empty")
+    shutil.rmtree(dst, ignore_errors=True)
+    shutil.copytree(os.path.join(imp, ".preview", "stage"), os.path.join(dst, "stage"))
+    for f in ("move.sbc1", "bullet.sbc1"):
+        shutil.copyfile(os.path.join(imp, "assets", "collision.sbc1"), os.path.join(dst, f))
+    sets = []
+    for v in range(4):
+        pts = [dict(role="start", kind=1, pos=[round(1200 * math.sin(a), 2), 5.0, round(1200 * math.cos(a), 2)],
+                    yaw=round(math.degrees(a) + 180, 2)) for a in (i * math.tau / 16 for i in range(16))]
+        for role, x, yaw in (("team_a", -2000.0, 90.0), ("team_b", 2000.0, -90.0)):
+            pts += [dict(role=role, kind=1, pos=[x + 300 * (i // 4) * (1 if x > 0 else -1), 5.0, -450.0 + 300 * (i % 4)],
+                         yaw=yaw) for i in range(8)]
+        pts += [dict(role="k30", kind=1, pos=[-3000.0, 5.0, 0.0], yaw=90.0),
+                dict(role="k31", kind=1, pos=[3000.0, 5.0, 0.0], yaw=-90.0)]
+        pts += [dict(role="k40", kind=1, pos=[x, 5.0, z], yaw=0.0) for x, z in ((0, 2500), (0, -2500), (2500, 2500), (-2500, -2500))]
+        sets.append({"ids": ["0%d" % v], "explicit": True, "points": pts, "objects": []})
+    json.dump({"explicit": True, "lp2": False, "units": "cm, LP2 map space (Y up)", "sets": sets},
+              open(os.path.join(out, "layout.json"), "w"), indent=1)
+    p = dict(format=FORMAT, version=VERSION,
+             info=dict(name=name, tag=tag, size=size, thumbnail=None),
+             base=dict(stock=0),
+             stage=dict(lp2_stage="assets/empty/stage", lp2_map="empty", light=dict(source="bake")),
+             collision=dict(lp1_move="assets/empty/move.sbc1", lp1_bullet="assets/empty/bullet.sbc1"),
+             layout=dict(file="layout.json", lift=False, lp1_vs=False),
+             environment=dict(ENVIRONMENT, kill_floor=-3000.0),
+             source=dict(empty=ground))
+    save(out, p)
+    return p
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -200,6 +263,10 @@ def main():
     l2.add_argument("num"); l2.add_argument("out"); l2.add_argument("--name", required=True)
     l2.add_argument("--game", required=True); l2.add_argument("--library", required=True)
     l2.add_argument("--tag"); l2.add_argument("--size", default="large", choices=("small", "medium", "large"))
+    n = sub.add_parser("new")
+    n.add_argument("out"); n.add_argument("--name", required=True); n.add_argument("--game", required=True)
+    n.add_argument("--tag"); n.add_argument("--size", default="medium", choices=("small", "medium", "large"))
+    n.add_argument("--ground", type=float, default=100.0, help="ground slab side, metres")
     c = sub.add_parser("check")
     c.add_argument("project")
     a = ap.parse_args()
@@ -209,6 +276,9 @@ def main():
     elif a.cmd == "import-lp2":
         p = import_lp2(a.num, a.out, a.name, a.game, a.library, a.tag, a.size)
         print(f"{a.out}: project \"{p['info']['name']}\" (LP2 online {p['stage']['lp2_map']}, tag {p['info']['tag']})")
+    elif a.cmd == "new":
+        p = new_empty(a.out, a.name, a.game, a.tag, a.size, a.ground)
+        print(f"{a.out}: new empty project \"{p['info']['name']}\" (tag {p['info']['tag']})")
     else:
         bad = check(a.project)
         print("\n".join(bad) if bad else "ok")

@@ -26,14 +26,14 @@ rInitPosSet kinds -> LP1 point roles:
 rObjSet: group 1 (VS) -> LP1 'vs' objects, group 4 (weapons) -> LP1 'weapon' objects, then its k40 points
 (14, unknown role), then its FFA starts; stock records beyond those are dropped (the group count
 shrinks). Group 3 (posts, gimmicks) -> the layout's 'object' markers with an om71xx model (data posts, copies of
-a stock post record); the stock map's own posts and gimmicks never stay. The Common file is emptied.
+a stock post record, "post": its number, +0x78 / +0x7c, default its order); the stock map's own posts and gimmicks never stay. The Common file is emptied.
 VS / weapons beyond the stock count (LP1's VS with --lp1-vs, "placed": true VS and any 'weapon'
 objects from the editor) are copies of the group's first record; a placed VS's type is its model ('vsXX'). Authored layouts: the mode-less -Common file's
 gimmicks (the stock map's, every mode) are dropped.
 Every record has its index within its group at +0x110 (u32, 0..n-1; an index
 duplicated is the suspected cause of pickups moving at match start), rewritten for cloned records.
 """
-import json, os, re, struct, sys
+import json, math, os, re, struct, sys
 import objset, xfs
 
 # per VS type: the stock loadout a marker without "weapons" gets (lp2vsfamilies.py; else the template record's)
@@ -43,6 +43,7 @@ try:
 except (OSError, ValueError, KeyError):
     VS_TYPES = {}
 
+POST_GAP = 150.0   # cm: a post this close to an earlier one is a double placement (they'd overlap)
 KIND_ROLE = {0: "start", 1: "team_a", 2: "team_b", 3: "k40", 6: "k30", 7: "k31"}
 # game type of a file, from its name (rInitPosSet and rObjSet name some modes differently)
 MODES = {"teambattle": "team", "team": "team", "kojinbattle": "slayer", "slayer": "slayer", "foxbattle": "fox",
@@ -137,6 +138,14 @@ def put_weapons(rec, q):
         struct.pack_into("<BBHB", rec, 0x120 + 5 * i, on, 4, wid, 0)
 
 
+def reindexed(b):
+    """the spawn lists after the records name every record (objset.reindex); a file it can't rebuild keeps its own"""
+    try:
+        return objset.reindex(b)
+    except AssertionError:
+        return b
+
+
 def patch_objset_lp2(b, lay, templates):
     """an authored layout (Blender export, "lp2": true): VS, weapons and posts are exactly its markers,
     records cloned from this file's own (or, when it has none, any stock file's) records of the group;
@@ -167,7 +176,7 @@ def patch_objset_lp2(b, lay, templates):
         out += b"".join(recs)
         new_counts[g] = len(recs)
     struct.pack_into("<4H", out, 0x0A, *(new_counts[g] for g in (1, 2, 3, 4)))
-    return bytes(out + b[end:]), counts, new_counts
+    return reindexed(bytes(out + b[end:])), counts, new_counts
 
 
 def drop_gimmicks(b):
@@ -180,7 +189,7 @@ def drop_gimmicks(b):
     out = bytearray(b[:0x30]) + b"".join(keep[g] for g in (1, 2, 3, 4))
     new = {g: len(keep[g]) // objset.SIZES[g] for g in (1, 2, 3, 4)}
     struct.pack_into("<4H", out, 0x0A, *(new[g] for g in (1, 2, 3, 4)))
-    return bytes(out + b[end:]), counts, new
+    return reindexed(bytes(out + b[end:])), counts, new
 
 
 def patch_objset(b, lay, lp1_vs=False):
@@ -190,7 +199,14 @@ def patch_objset(b, lay, lp1_vs=False):
     # explicit layout, lp2convert.py: its weapon markers are all the pickups)
     if not lay.get("explicit"):
         src[4] += [p for p in lay["points"] if p["role"] == "k40"] + [p for p in lay["points"] if p["role"] == "start"]
-    posts = [o for o in lay["objects"] if o["role"] == "object" and str(o.get("model", "")).startswith("om71")]
+    posts = []
+    for o in lay["objects"] + lay["points"]:   # (editors before 2026-11-03 put placed posts in points)
+        if o["role"] != "object" or not str(o.get("model", "")).startswith("om71"):
+            continue
+        if any(math.dist(o["pos"], q["pos"]) < POST_GAP for q in posts):   # overlapping: a double placement
+            print(f"  post at {[round(v) for v in o['pos']]} skipped: overlaps another", file=sys.stderr)
+            continue
+        posts.append(o)
     out, off, new_counts = bytearray(b[:0x30]), 0x30, {}
     for g in (1, 2, 3, 4):
         kept = 0
@@ -207,6 +223,8 @@ def patch_objset(b, lay, lp1_vs=False):
                 struct.pack_into("<3f", rec, 0x40, *q["pos"])
                 struct.pack_into("<f", rec, 0x54, q["yaw"])
                 struct.pack_into("<I", rec, 0x110, kept)
+                num = int(q.get("post", kept))   # the post's number (stock: 0..n-1 at +0x78 and +0x7c)
+                struct.pack_into("<II", rec, 0x78, num, num)
                 out += rec
                 kept += 1
             new_counts[3] = kept
@@ -257,7 +275,7 @@ def patch_objset(b, lay, lp1_vs=False):
             kept += 1
         new_counts[g] = kept
     struct.pack_into("<4H", out, 0x0A, *(new_counts[g] for g in (1, 2, 3, 4)))
-    return bytes(out + b[end:]), counts, new_counts
+    return reindexed(bytes(out + b[end:])), counts, new_counts
 
 
 def stock_layout(files):

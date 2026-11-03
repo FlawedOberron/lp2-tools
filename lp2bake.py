@@ -112,6 +112,9 @@ class _Tracer:
         from embreex import rtcore_scene as rtcs
         from embreex.mesh_construction import TriangleMesh
         self.scene = rtcs.EmbreeScene()
+        self.empty = not len(T)   # nothing casts shadows (every piece dynamic): every ray is clear
+        if self.empty:
+            return
         TriangleMesh(self.scene, P[T])
         tri_n = np.cross(P[T[:, 1]] - P[T[:, 0]], P[T[:, 2]] - P[T[:, 0]])
         front = np.sign(np.einsum("ij,ij->i", tri_n, N[T].sum(1)))   # which side of each triangle its vertices face
@@ -120,6 +123,8 @@ class _Tracer:
     def run(self, o, d, dist=None):
         """-> primID (-2: the ray started behind a surface), u, v"""
         pid, u, v = np.empty(len(o), np.int32), np.empty(len(o), np.float32), np.empty(len(o), np.float32)
+        if self.empty:
+            return np.full(len(o), -1, np.int32), np.zeros(len(o), np.float32), np.zeros(len(o), np.float32)
 
         def part(i):
             sl = slice(i, i + PART)
@@ -151,16 +156,18 @@ def _sun_dir(env):
     return sd / np.linalg.norm(sd)
 
 
-def bake(P, N, T, vmat, albedo, emission, env, lights, s, log=print, reach=None):
+def bake(P, N, T, vmat, albedo, emission, env, lights, s, log=print, reach=None, occ=None):
     """-> light components per vertex (n, 15): COMPONENTS x rgb, before the live settings (combine());
     NaN for the far geometry (it keeps its old colour). The sun, sky and ground are white here (their colours
     are live), the placed lights and glow carry their own colours. Bounces are in every component.
     P (n, 3) cm, N (n, 3) unit normals, T (k, 3) triangles, vmat (n,) material per vertex, albedo / emission
     (materials, 3) linear, env the project's environment, lights its placed lights, s settings(); reach (n,) cm:
-    how far from each vertex its rays may start at most (None: no limit)."""
+    how far from each vertex its rays may start at most (None: no limit); occ (n,) bool: the vertices whose
+    triangles block light (None: all; dynamic and hidden pieces are lit but cast nothing)."""
     P, N, far = _clean(P, N)
     T = T[~far[T].any(1)]
-    tracer = _Tracer(P, N, T)
+    Tocc = T if occ is None else T[occ[T].all(1)]
+    tracer = _Tracer(P, N, Tocc)
     run, trace = tracer.run, tracer.trace
     n = len(P)
     rng = np.random.default_rng(1)
@@ -251,7 +258,7 @@ def bake(P, N, T, vmat, albedo, emission, env, lights, s, log=print, reach=None)
     # Light adds up, so each component bounces on its own; the gather is a fixed sparse sum (owner <- 3 vertices),
     # done for all components at once, rows split over the threads (CSR: the owners are in order).
     progress(0.72, "bounces")
-    T32 = T.astype(np.int32)
+    T32 = Tocc.astype(np.int32)   # the tracer's primIDs index the occluders
     hitm = hit_p >= 0
     cnt = hitm.sum(1)
     starts = np.concatenate([[0], np.cumsum(cnt)]) * 3   # each vertex's entries: 3 per sky ray that hit
@@ -453,7 +460,7 @@ class _EdgeSet:
         return self.ki[ie], np.where(self.flip[ie], 1 - t[src], t[src]), src
 
 
-def shadow_splits(P, N, T, env, sharp, es):
+def shadow_splits(P, N, T, env, sharp, es, occ=None):
     """where the sun's shadow lines cross the edges (position edges of es): the sun traced every EDGE_STEP along each
     edge facing it, each change between lit and shadowed narrowed down by bisection, the line's direction found by a
     second crossing PROBE beside it, and a vertex put SHADOW_PAIR from the line on either side; and triangles with a
@@ -467,7 +474,7 @@ def shadow_splits(P, N, T, env, sharp, es):
     empty = (np.zeros(0, np.int64), np.zeros(0), np.zeros(0, bool), np.zeros(0), np.full(n, np.nan))
     if not len(Tt):
         return empty
-    tracer = _Tracer(P, N, Tt)
+    tracer = _Tracer(P, N, Tt if occ is None else Tt[occ[Tt].all(1)])
     sd = _sun_dir(env)
     sd32 = sd.astype(np.float32)
     a, b, W = es.a, es.b, es.W
@@ -593,18 +600,20 @@ def detail_passes(detail):
 
 def bake_detailed(attrs, T, albedo, emission, env, lights, s, log=print):
     """bake() with the detail passes: -> attrs, T (split), components. attrs needs P (cm), N, vmat, group (the
-    vertex's block / mesh: kept together by the caller); anything else is carried along"""
+    vertex's block / mesh: kept together by the caller), optionally occ (1: casts shadows, 0: lit only; see bake);
+    anything else is carried along"""
+    occ = lambda: attrs["occ"] > 0.5 if "occ" in attrs else None
     budget = int(len(attrs["P"]) * float(s.get("detail") or 0) / 100)
     reach = np.full(len(attrs["P"]), np.inf)
     for it in range(detail_passes(s.get("detail") or 0) if budget > 0 else 0):
         es = _EdgeSet(attrs["P"], T)
-        we, t, pair, side, vside = shadow_splits(attrs["P"], attrs["N"], T, env, np.isfinite(reach), es)
+        we, t, pair, side, vside = shadow_splits(attrs["P"], attrs["N"], T, env, np.isfinite(reach), es, occ())
         fit = np.cumsum(es.count[we]) <= budget                                # whole points (every copy) only
         we, t, pair, side = we[fit], t[fit], pair[fit], side[fit]
         left = budget - int(es.count[we].sum())
         if left > 0:
             quick = dict(s, samples=min(DETAIL_SAMPLES, int(s["samples"])), bounces=min(1, int(s["bounces"])))
-            comp = bake(attrs["P"], attrs["N"], T, attrs["vmat"], albedo, emission, env, lights, quick, log, reach)
+            comp = bake(attrs["P"], attrs["N"], T, attrs["vmat"], albedo, emission, env, lights, quick, log, reach, occ())
             cw, ct = contrast_splits(attrs["P"], T, combine(comp, env, dict(s, sun=0.0)).mean(1), es, we)
             fit = np.cumsum(es.count[cw]) <= left
             we, t = np.concatenate([we, cw[fit]]), np.concatenate([t, ct[fit]])
@@ -619,7 +628,7 @@ def bake_detailed(attrs, T, albedo, emission, env, lights, s, log=print):
         if not len(key) or budget <= 0:
             break
     comp = bake(attrs["P"], attrs["N"], T, attrs["vmat"], albedo, emission, env, lights, s, log,
-                reach if np.isfinite(reach).any() else None)
+                reach if np.isfinite(reach).any() else None, occ())
     return attrs, T, comp
 
 
@@ -661,14 +670,69 @@ def preview_arrays(prev, name="geo"):
     return g, P, N, C, idx, vmat
 
 
-def bake_preview(folder, log=print):
+def placed_copies(folder, geo, lib, skip=(), log=print):
+    """the placed copies of imported meshes and library pieces (geometry copies with a "map"), in world space:
+    [dict(k (copy index), map, atom, m, P cm, N, U, C, T, vmat (into mats), mats [dict(name, albedo)])]"""
+    import lp2pieces
+    out, srcs = [], {}
+    for k, c in enumerate(geo.get("copies") or []):
+        if not c.get("map") or k in skip:
+            continue
+        rel = c["map"]
+        if rel not in srcs:
+            try:
+                prev = os.path.join(lp2pieces.map_folder(lib, rel, folder), ".preview")
+                g, P, N, C, T, vmat = preview_arrays(prev)
+            except (SystemExit, OSError) as e:
+                log(f"bake: {rel} left out ({e})")
+                srcs[rel] = None
+                continue
+            raw = open(os.path.join(prev, "geo.bin"), "rb").read()
+            U = np.frombuffer(raw, "<f4", g["arrays"]["uv"][1] // 4, g["arrays"]["uv"][0]).reshape(-1, 2)
+            atom = np.zeros(len(P), np.int64)
+            for at, mat, v0, vn, i0, ic in g["blocks"]:
+                atom[v0:v0 + vn] = at
+            mats = [dict(name=m.get("name"), albedo=albedo_png(os.path.join(prev, m["tex"])) if m.get("tex") else None)
+                    for m in g["materials"]]
+            srcs[rel] = (P, N, C, U, T, vmat, atom, mats)
+        if srcs[rel] is None:
+            continue
+        P, N, C, U, T, vmat, atom, mats = srcs[rel]
+        sel = atom[T[:, 0]] == int(c["atom"])
+        if not sel.any():
+            continue
+        vi, inv = np.unique(T[sel], return_inverse=True)
+        M = lp2pieces.matrix(c["m"])
+        A = M[:, :3]
+        n = N[vi] @ np.linalg.inv(A)   # (A^-T n) as rows
+        n /= np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-9)
+        out.append(dict(k=k, map=rel, atom=int(c["atom"]), m=list(c["m"]), P=P[vi] @ A.T + M[:, 3], N=n, U=U[vi],
+                        C=C[vi], T=inv.reshape(-1, 3), vmat=vmat[vi], mats=mats))
+    return out
+
+
+def _orient(P, N, T):
+    """triangles wound counter-clockwise about their vertex normals (lp2preview.write_geo)"""
+    face = np.cross(P[T[:, 1]] - P[T[:, 0]], P[T[:, 2]] - P[T[:, 0]])
+    back = (face * N[T].sum(1)).sum(1) < 0
+    T[back] = T[back][:, [0, 2, 1]]
+    return T
+
+
+def bake_preview(folder, log=print, library=None):
     """bake into PROJECT/.preview: bake.bin (the components, see write_custom) and geo.bin / geo.json (split by the
     detail passes; col combined with the current settings, for everything that reads the plain colour). The unsplit
-    preview (with the LP1 bake) stays in geo_base.bin / .json: every bake starts from it, restore_preview puts it back"""
-    import lp2project
+    preview (with the LP1 bake) stays in geo_base.bin / .json: every bake starts from it, restore_preview puts it back.
+    Placed imported meshes / library pieces are baked with the map (they cast shadows and get light, split by the
+    detail passes like it) into bake_copies.json / .bin, which the editor draws instead of their plain mesh; pieces
+    marked dynamic and hidden atoms get light but cast no shadows."""
+    import lp2pieces, lp2project
     p = lp2project.load(folder)
     s = settings(p)
     env = p.get("environment") or {}
+    geo = lp2pieces.load_geometry(os.path.join(folder, p["geometry"]["file"])) if p.get("geometry") else {}
+    dyn_atoms, dyn_copies = lp2pieces.dynamic_parts(geo)
+    dyn_atoms |= {int(a) for a in geo.get("hidden") or []}
     prev = os.path.join(folder, ".preview")
     old = os.path.join(prev, "col_lp1.bin")   # an earlier bake's keep of the LP1 colours: back into geo.bin first
     if os.path.exists(old) and not os.path.exists(os.path.join(prev, "geo_base.bin")):
@@ -685,43 +749,128 @@ def bake_preview(folder, log=print):
     raw = open(os.path.join(prev, "geo_base.bin"), "rb").read()
     U = np.frombuffer(raw, "<f4", g["arrays"]["uv"][1] // 4, g["arrays"]["uv"][0]).reshape(-1, 2)
     group = np.zeros(len(P), np.int64)
+    occ = np.ones(len(P))
     for k, (atom, mat, v0, vn, i0, ic) in enumerate(g["blocks"]):
         group[v0:v0 + vn] = k
-    mats = g["materials"]
-    albedo = np.stack([a if a is not None else np.full(3, 0.5) for a in
-                       (albedo_png(os.path.join(prev, m["tex"])) if m.get("tex") else None for m in mats)]).astype(np.float64)
-    attrs = dict(P=P.astype(np.float64), N=N.astype(np.float64), U=U, C=C, vmat=vmat, group=group)
-    attrs, T, comp = bake_detailed(attrs, T, albedo, emission_table([m.get("name") for m in mats], s),
+        if atom in dyn_atoms:
+            occ[v0:v0 + vn] = 0
+    nb = len(g["blocks"])
+    mats = [dict(name=m.get("name"), albedo=albedo_png(os.path.join(prev, m["tex"])) if m.get("tex") else None)
+            for m in g["materials"]]
+    copies = placed_copies(folder, geo, library, log=log)
+    first_mat = []
+    parts = [(P, N, U, C, T, vmat, group, occ)]
+    base = len(P)
+    for j, c in enumerate(copies):
+        first_mat.append(len(mats))
+        mats += c["mats"]
+        n = len(c["P"])
+        parts.append((c["P"], c["N"], c["U"], c["C"], c["T"] + base, c["vmat"] + first_mat[-1],
+                      np.full(n, nb + j), np.full(n, 0.0 if c["k"] in dyn_copies else 1.0)))
+        base += n
+    if copies:
+        log(f"bake: {len(copies)} placed pieces ({sum(c['k'] in dyn_copies for c in copies)} dynamic), "
+            f"{sum(len(c['T']) for c in copies)} triangles")
+    cat = lambda i: np.concatenate([q[i] for q in parts])
+    P, N, U, C, T, vmat, group, occ = (cat(i) for i in range(8))
+    albedo = np.stack([m["albedo"] if m["albedo"] is not None else np.full(3, 0.5) for m in mats]).astype(np.float64)
+    attrs = dict(P=P.astype(np.float64), N=N.astype(np.float64), U=U, C=C, vmat=vmat, group=group, occ=occ)
+    n_in = len(P)
+    attrs, T, comp = bake_detailed(attrs, T, albedo, emission_table([m["name"] for m in mats], s),
                                    env, p.get("lights") or [], s, log)
     order = np.argsort(attrs["group"], kind="stable")   # back into blocks
     attrs, T, comp = {k: v[order] for k, v in attrs.items()}, np.argsort(order)[T], comp[order]
     T = T[np.argsort(attrs["group"][T[:, 0]], kind="stable")]
-    write_custom(os.path.join(prev, "bake.bin"), comp)
+    # the detail splits' new triangles wound counter-clockwise about their normals too (lp2preview.write_geo)
+    T = _orient(attrs["P"], attrs["N"], T)
     L = combine(comp, env, s)
     col = np.array(attrs["C"], np.float32)
     ok = np.isfinite(L).all(1)
     col[ok, :3] = to_colour(L[ok])
-    nb = len(g["blocks"])
-    v0 = np.searchsorted(attrs["group"], np.arange(nb))
-    vn = np.bincount(attrs["group"], minlength=nb)
+    nv = int(np.searchsorted(attrs["group"], nb))      # the map's own vertices come first, then the copies'
     tg = attrs["group"][T[:, 0]]
-    t0 = np.searchsorted(tg, np.arange(nb))
-    tc = np.bincount(tg, minlength=nb)
-    local = T - v0[tg][:, None]
+    tb = T[tg < nb]
+    write_custom(os.path.join(prev, "bake.bin"), comp[:nv])
+    v0 = np.searchsorted(attrs["group"], np.arange(nb))
+    vn = np.bincount(attrs["group"][:nv], minlength=nb)
+    tgb = attrs["group"][tb[:, 0]]
+    t0 = np.searchsorted(tgb, np.arange(nb))
+    tc = np.bincount(tgb, minlength=nb)
+    local = tb - v0[tgb][:, None]
     cur = json.load(open(os.path.join(prev, "geo.json")))   # keep what other tools added to it
     arrays, bin_ = {}, bytearray()
-    for name, arr in (("pos", attrs["P"] / 100.0), ("nrm", attrs["N"]), ("uv", attrs["U"]), ("col", col), ("idx", local.ravel())):
+    for name, arr in (("pos", attrs["P"][:nv] / 100.0), ("nrm", attrs["N"][:nv]), ("uv", attrs["U"][:nv]), ("col", col[:nv]),
+                      ("idx", local.ravel())):
         data = np.asarray(arr).astype("<i4" if name == "idx" else "<f4").tobytes()
         arrays[name] = [len(bin_), len(data)]
         bin_ += data
     cur["arrays"] = arrays
     cur["blocks"] = [[blk[0], blk[1], int(v0[k]), int(vn[k]), int(t0[k]) * 3, int(tc[k]) * 3] for k, blk in enumerate(g["blocks"])]
-    cur.setdefault("stats", {}).update(vertices=int(len(attrs["P"])), triangles=int(len(T)))
+    cur.setdefault("stats", {}).update(vertices=int(nv), triangles=int(len(tb)))
     open(os.path.join(prev, "geo.bin"), "wb").write(bin_)
     json.dump(cur, open(os.path.join(prev, "geo.json"), "w"), separators=(",", ":"))
+    write_copies(prev, copies, first_mat, attrs, T, tg, comp, col, nb)
     ref = np.power(np.clip(C[:, :3] * 2, 0, None), 2.2)
     log(f"bake: median light {np.nanmedian(L):.3f} (LP1 bake {np.median(ref):.3f}); "
-        f"{len(attrs['P'])} vertices ({len(attrs['P']) - len(P):+d} for detail)")
+        f"{len(attrs['P'])} vertices ({len(attrs['P']) - n_in:+d} for detail)")
+
+
+def write_copies(prev, copies, first_mat, attrs, T, tg, comp, col, nb):
+    """the baked placed pieces for the editor: bake_copies.json {copies: [{map, atom, m, blocks [[source material,
+    v0, vn, i0, ic]]}], arrays {pos, nrm, uv, col, idx, bake: [offset, bytes]}} + .bin. Positions / normals in the
+    piece's own space (metres; the editor places them with the copy's matrix), triangles wound to the normals there,
+    idx local to a block, bake = write_custom's 4 channels for these vertices"""
+    import lp2pieces
+    jpath, bpath = os.path.join(prev, "bake_copies.json"), os.path.join(prev, "bake_copies.bin")
+    if not copies:
+        for f in (jpath, bpath):
+            if os.path.exists(f):
+                os.remove(f)
+        return
+    out, acc = [], {k: [] for k in ("pos", "nrm", "uv", "col", "idx", "comp")}
+    nv = 0
+    for j, c in enumerate(copies):
+        vi = np.nonzero(attrs["group"] == nb + j)[0]
+        vi = vi[np.argsort(attrs["vmat"][vi], kind="stable")]         # a block per material
+        remap = np.full(len(attrs["P"]), -1, np.int64)
+        remap[vi] = np.arange(len(vi))
+        M = lp2pieces.matrix(c["m"])
+        A = M[:, :3]
+        Pl = (attrs["P"][vi] - M[:, 3]) @ np.linalg.inv(A).T
+        Nl = attrs["N"][vi] @ A
+        Nl /= np.maximum(np.linalg.norm(Nl, axis=1, keepdims=True), 1e-9)
+        Tl = _orient(Pl, Nl, remap[T[tg == nb + j]])
+        vm = attrs["vmat"][vi] - first_mat[j]
+        tm = vm[Tl[:, 0]]
+        Tl = Tl[np.argsort(tm, kind="stable")]
+        tm = vm[Tl[:, 0]]
+        blocks, i0 = [], sum(len(x) for x in acc["idx"])
+        for mat in np.unique(vm):
+            b0, b1 = np.searchsorted(vm, [mat, mat + 1])
+            t_ = Tl[tm == mat] - b0
+            blocks.append([int(mat), nv + int(b0), int(b1 - b0), i0, len(t_) * 3])
+            acc["idx"].append(t_.ravel())
+            i0 += len(t_) * 3
+        acc["pos"].append(Pl / 100.0)
+        acc["nrm"].append(Nl)
+        acc["uv"].append(attrs["U"][vi])
+        acc["col"].append(col[vi])
+        acc["comp"].append(comp[vi])
+        nv += len(vi)
+        out.append(dict(map=c["map"], atom=c["atom"], m=c["m"], blocks=blocks))
+    arrays, bin_ = {}, bytearray()
+    for name in ("pos", "nrm", "uv", "col", "idx"):
+        data = np.concatenate(acc[name]).astype("<i4" if name == "idx" else "<f4").tobytes()
+        arrays[name] = [len(bin_), len(data)]
+        bin_ += data
+    tmp = bpath + ".tmp"
+    write_custom(tmp, np.concatenate(acc["comp"]))
+    data = open(tmp, "rb").read()
+    os.remove(tmp)
+    arrays["bake"] = [len(bin_), len(data)]
+    bin_ += data
+    open(bpath, "wb").write(bin_)
+    json.dump(dict(version=1, copies=out, arrays=arrays), open(jpath, "w"), separators=(",", ":"))
 
 
 def write_custom(path, comp):
@@ -743,8 +892,9 @@ def read_custom(path):
 
 def restore_preview(folder, log=print):
     prev = os.path.join(folder, ".preview")
-    if os.path.exists(os.path.join(prev, "bake.bin")):
-        os.remove(os.path.join(prev, "bake.bin"))
+    for f in ("bake.bin", "bake_copies.json", "bake_copies.bin"):
+        if os.path.exists(os.path.join(prev, f)):
+            os.remove(os.path.join(prev, f))
     if os.path.exists(os.path.join(prev, "geo_base.bin")):
         cur = json.load(open(os.path.join(prev, "geo.json")))
         base = json.load(open(os.path.join(prev, "geo_base.json")))
@@ -759,8 +909,9 @@ def restore_preview(folder, log=print):
 
 # ---------------------------------------------------------------- the built stage (lp2mapc.py)
 
-def bake_stage(model, folder, p, log=print):
-    """re-light (and with detail, split) a written stage rModel in place"""
+def bake_stage(model, folder, p, log=print, dynamic=None):
+    """re-light (and with detail, split) a written stage rModel in place; dynamic (k, 3) cm: the positions of the
+    dynamic pieces' vertices (lp2pieces.dynamic_points), which get light but cast no shadows"""
     import lp2pieces, lp2stage
     S = lp2pieces.read_stage(model)
     s = settings(p)
@@ -777,6 +928,11 @@ def bake_stage(model, folder, p, log=print):
                  vmat=np.concatenate([np.full(len(m["v"]), m["mat"]) for m in S["meshes"]]),
                  group=np.concatenate([np.full(len(m["v"]), k) for k, m in enumerate(S["meshes"])]))
     attrs["N"] /= np.maximum(np.linalg.norm(attrs["N"], axis=1, keepdims=True), 1e-6)
+    if dynamic is not None and len(dynamic):
+        key = lambda q: np.round(q).astype(np.int64)   # to the centimetre: the written stage stores float32
+        dyn = {tuple(r) for r in key(dynamic)}
+        attrs["occ"] = np.array([0.0 if tuple(r) in dyn else 1.0 for r in key(attrs["P"])])
+        log(f"  baked light: {int((attrs['occ'] == 0).sum())} vertices of dynamic pieces cast no shadows")
     names = []
     for raw in S["materials"]:
         slot = int.from_bytes(raw[12:16], "little")
@@ -789,9 +945,12 @@ def bake_stage(model, folder, p, log=print):
     # settings and the sun / sky / ground colours don't change
     lights = p.get("lights") or []
     model_bytes = open(model, "rb").read()
-    ray_inputs = dict(s={k: v for k, v in s.items() if k not in LIVE and k != "source"}, sun=env.get("sun"), lights=lights)
+    dyn_key = None if "occ" not in attrs else np.packbits(attrs["occ"] > 0.5).tobytes()
+    ray_inputs = dict(s={k: v for k, v in s.items() if k not in LIVE and k != "source"}, sun=env.get("sun"), lights=lights,
+                      dyn=None if dyn_key is None else hashlib.sha1(dyn_key).hexdigest())
     key_comp = _key(model_bytes, albedo.tobytes(), ray_inputs)
-    key_full = _key(model_bytes, albedo.tobytes(), s, lights, {k: env.get(k) for k in ("sun", "sun_colour", "sky_colour", "ground_colour")})
+    key_full = _key(model_bytes, albedo.tobytes(), s, lights, {k: env.get(k) for k in ("sun", "sun_colour", "sky_colour", "ground_colour")},
+                    ray_inputs["dyn"])
     full = os.path.join(cache_dir(), key_full + ".rModel")
     if os.path.exists(full):
         open(model, "wb").write(open(full, "rb").read())
@@ -858,8 +1017,12 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("project")
     ap.add_argument("--restore", action="store_true")
+    ap.add_argument("--library", help="the asset library (placed library pieces are baked with the map)")
     a = ap.parse_args()
-    (restore_preview if a.restore else bake_preview)(a.project)
+    if a.restore:
+        restore_preview(a.project)
+    else:
+        bake_preview(a.project, library=a.library)
 
 
 if __name__ == "__main__":

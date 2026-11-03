@@ -20,6 +20,12 @@ there is no colour map, size: the largest side}. Built as rTextures (lp2tex.py) 
 the stage folder, so imports that share a material (a trim sheet) share its textures in the map's memory.
 A file's own materials become project materials named after them (an existing one of that name is reused, so
 meshes from one source file share their sheets); --mat SRC=MAT maps a file material to a project one.
+import.json "unwrap": M (rebuild --unwrap; the editor's Lazy unwrap) does the same as a material's "grid" for one
+mesh, for files without usable UVs.
+import.json "blockout": true (rebuild --blockout 1; the editor's Blockout) ignores the file's materials and colours the
+faces by facing: walkable floors (up to the navmesh's 50 degrees) blockout_floor (orange), walls blockout_wall
+(grey-white), ceilings blockout_ceiling (dark grey); project materials made on first use (blockout grid, 1 m), so
+they can be recoloured like any other.
 No normal map = flat; no mask map = black (lp2stage.py's defaults for LP1 materials without them).
 "grid": M (--grid; 0 = off) replaces the mesh's UVs with world-projected ones, one texture tile per M metres of the
 piece's own space (each face takes the axis plane it faces most; a scaled piece stretches it).
@@ -342,6 +348,9 @@ def load_image(path, size):
 
 
 BLOCKOUT_ORANGE = (0.93, 0.47, 0.16)
+# import.json "blockout": material per facing (floor: normal y >= cos 50 degrees, the navmesh's walkable slope)
+BLOCKOUT_FACINGS = {"floor": (0.93, 0.47, 0.16), "wall": (0.82, 0.82, 0.80), "ceiling": (0.30, 0.30, 0.31)}
+BLOCKOUT_FLOOR_Y = 0.6428
 
 
 def blockout_image(colour=BLOCKOUT_ORANGE, px=512):
@@ -421,10 +430,46 @@ def ensure_material(project, name, src):
     return name
 
 
+def ensure_blockout(project, facing):
+    """the project material blockout_<facing> (made with its blockout grid on first use) -> its name"""
+    name = "blockout_" + facing
+    if not load_material(project, name):
+        from PIL import Image
+        d = mat_dir(project, name)
+        os.makedirs(d, exist_ok=True)
+        colour = BLOCKOUT_FACINGS[facing]
+        Image.fromarray(blockout_image(colour)).save(os.path.join(d, "bm.png"))
+        save_material(project, name, {"colour": list(colour), "bm": "bm.png", "grid": 1.0})
+    return name
+
+
+def split_facing(parts):
+    """import.json "blockout": each part's triangles split by facing -> parts whose "mat" is @floor / @wall /
+    @ceiling (vertices compacted per part, the file's UVs kept: the blockout materials' grid replaces them)"""
+    out = []
+    for p in parts:
+        P, T = p["P"], p["T"]
+        n = np.cross(P[T[:, 1]] - P[T[:, 0]], P[T[:, 2]] - P[T[:, 0]])
+        ny = n[:, 1] / np.maximum(np.linalg.norm(n, axis=1), 1e-12)
+        kind = np.where(ny >= BLOCKOUT_FLOOR_Y, 0, np.where(ny <= -BLOCKOUT_FLOOR_Y, 2, 1))
+        for k, facing in enumerate(("floor", "wall", "ceiling")):
+            sel = T[kind == k]
+            if not len(sel):
+                continue
+            used, inv = np.unique(sel, return_inverse=True)
+            q = dict(p, mat="@" + facing, T=inv.reshape(-1, 3))
+            for key in ("P", "N", "U", "C"):
+                if p.get(key) is not None:
+                    q[key] = p[key][used]
+            out.append(q)
+    return out
+
+
 def material_users(project, name):
     out = []
     for imp in list_imports(project):
-        if name in imp.get("slots", {}).values() and not imp.get("missing"):   # missing: its object left the file
+        blk = imp.get("blockout") and name.startswith("blockout_") and name[9:] in BLOCKOUT_FACINGS
+        if (blk or name in imp.get("slots", {}).values()) and not imp.get("missing"):   # missing: its object left the file
             out.append(imp["name"])
     return out
 
@@ -537,6 +582,9 @@ def build_import(game, project, name, log=print, d=None, mesh=None):
         raise SystemExit(f"{cfg['source']}: no triangles" + (" (only COL_ collision objects)" if cols else ""))
     scale = float(cfg.get("scale", 100.0))
     slots = cfg.setdefault("slots", {})
+    if cfg.get("blockout"):
+        parts = split_facing(parts)
+        slots = {"@" + f: ensure_blockout(project, f) for f in BLOCKOUT_FACINGS}
     for p in parts:
         if p["mat"] not in slots:
             slots[p["mat"]] = ensure_material(project, slug(p["mat"] or name), fmats.get(p["mat"], {}))
@@ -573,7 +621,8 @@ def build_import(game, project, name, log=print, d=None, mesh=None):
         N = p["N"] if p["N"] is not None else lp2props.face_normals(P, T)
         U = p["U"] if p["U"] is not None else np.zeros((len(P), 2))
         C = p["C"]
-        grid = float((load_material(project, mname) or {}).get("grid") or 0)
+        # import.json "unwrap" (the editor's Lazy unwrap): box-projected UVs whatever the material says
+        grid = float(cfg.get("unwrap") or 0) or float((load_material(project, mname) or {}).get("grid") or 0)
         if grid > 0:
             if C is not None:
                 C = C[T].reshape(-1, C.shape[1])
@@ -743,6 +792,11 @@ def cmd_import(a):
     copy_source(src, os.path.join(d, "source"))
     cfg = {"source": os.path.basename(src), "from": src, "collision": a.collision or "mesh",
            "scale": a.scale if a.scale is not None else 100.0, "slots": {}}
+    old = os.path.join(d, "import.json")
+    if a.replace and os.path.exists(old):   # a re-import keeps the Lazy unwrap and the Blockout
+        for k in ("unwrap", "blockout"):
+            if json.load(open(old)).get(k):
+                cfg[k] = json.load(open(old))[k]
     for s, m in parse_mats(a.mat).items():
         cfg["slots"][s] = slug(m)
     json.dump(cfg, open(os.path.join(d, "import.json"), "w"), indent=1)
@@ -757,6 +811,13 @@ def cmd_rebuild(a):
         cfg["collision"] = a.collision
     if a.scale is not None:
         cfg["scale"] = a.scale
+    if a.unwrap is not None:
+        cfg["unwrap"] = a.unwrap
+    if a.blockout is not None:
+        if a.blockout:
+            cfg["blockout"] = True
+        else:
+            cfg.pop("blockout", None)
     for s, m in parse_mats(a.mat).items():
         cfg.setdefault("slots", {})[s] = slug(m)
     json.dump(cfg, open(os.path.join(d, "import.json"), "w"), indent=1)
@@ -847,6 +908,9 @@ def main():
             s.add_argument("--split", action="store_true", help="one piece per Blender object (NAME = the set)")
         s.add_argument("--collision", choices=["mesh", "box", "none"])
         s.add_argument("--scale", type=float)
+        if c == "rebuild":
+            s.add_argument("--unwrap", type=float, help="box-projected UVs, metres per texture tile (0 = the file's UVs)")
+            s.add_argument("--blockout", type=int, choices=[0, 1], help="1: colour by facing (floor / wall / ceiling)")
         s.add_argument("--mat", action="append", help="SRC=MAT: the file's material SRC uses project material MAT")
     s = sub.add_parser("material")
     s.add_argument("--game", required=True)

@@ -39,6 +39,35 @@ def parse(b):
     return counts, out, off
 
 
+def reindex(b):
+    """rebuild the trailer from the records, so added / removed records spawn. After the records: u32 x u16 @0x12:
+    128 phase starts (index into this same table), then per phase [0, 0, n, n x (group << 16 | index in group)]
+    (phase = record +0x04; the spawner FUN_00f742f0 creates only the records listed for a phase), then u16 @0x14
+    u32 types {0, item >> 8, item & 0xff, kind} in first-seen order. Group 0 (0x130-byte records, header u16 @0x08)
+    is never used by stock files."""
+    cnt = struct.unpack_from("<5H", b, 0x08)
+    assert cnt[0] == 0, "group 0 records"
+    off, phases, types = 0x30, {}, []
+    for g in (1, 2, 3, 4):
+        for i in range(cnt[g]):
+            phases.setdefault(struct.unpack_from("<I", b, off + 4)[0], []).append(g << 16 | i)
+            kind, item = struct.unpack_from("<BH", b, off + 0x19)
+            t = struct.pack(">xHB", item, kind)
+            if t not in types:
+                types.append(t)
+            off += SIZES[g]
+    assert all(p < 128 for p in phases), sorted(phases)
+    starts, body = [], []
+    for p in range(128):
+        starts.append(128 + len(body))
+        ids = phases.get(p, [])
+        body += [0, 0, len(ids)] + ids
+    tab = starts + body
+    out = bytearray(b[:off]) + struct.pack(f"<{len(tab)}I", *tab) + b"".join(types)
+    struct.pack_into("<2H", out, 0x12, len(tab), len(types))
+    return bytes(out)
+
+
 if __name__ == "__main__":
     counts, recs, end = parse(open(sys.argv[1], "rb").read())
     if "--json" in sys.argv:
