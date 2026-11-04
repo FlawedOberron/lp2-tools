@@ -142,6 +142,18 @@ class Brain:
         return self.new("cAIPlanMoveTime", Return=1, Time=frames, IsParamCheck=0)
 
     def bytes(self):
+        # Ids in write order, as stock files have them: the game's reader keeps its objects in a table by id, and
+        # copied items would otherwise share their prototype's id (crashed AI Enemy Battle on load, 2026-11-03).
+        n = [0]
+
+        def number(ob):
+            ob["id"] = n[0]
+            n[0] += 1
+            for vs in ob["values"]:
+                for v in vs:
+                    if isinstance(v, dict) and "cls" in v:
+                        number(v)
+        number(self.t["root"])
         return xfstree.write(self.t)
 
 
