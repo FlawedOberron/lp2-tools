@@ -61,7 +61,36 @@ def for_mode(lay, mode):
     return dict(lay, points=[p for p in lay["points"] if keep(p)], objects=[o for o in lay["objects"] if keep(o)])
 
 
+def default_points():
+    """a new map's spawns (lp2project.py): 16 FFA starts in a 12 m ring, two team rows, k30 / k31, four k40"""
+    pts = [dict(role="start", kind=1, pos=[round(1200 * math.sin(a), 2), 5.0, round(1200 * math.cos(a), 2)],
+                yaw=round(math.degrees(a) + 180, 2)) for a in (i * math.tau / 16 for i in range(16))]
+    for role, x, yaw in (("team_a", -2000.0, 90.0), ("team_b", 2000.0, -90.0)):
+        pts += [dict(role=role, kind=1, pos=[x + 300 * (i // 4) * (1 if x > 0 else -1), 5.0, -450.0 + 300 * (i % 4)],
+                     yaw=yaw) for i in range(8)]
+    pts += [dict(role="k30", kind=1, pos=[-3000.0, 5.0, 0.0], yaw=90.0),
+            dict(role="k31", kind=1, pos=[3000.0, 5.0, 0.0], yaw=-90.0)]
+    pts += [dict(role="k40", kind=1, pos=[x, 5.0, z], yaw=0.0) for x, z in ((0, 2500), (0, -2500), (2500, 2500), (-2500, -2500))]
+    return pts
+
+
+def untouched(st):
+    """a set still as a new map made it (never edited): its spawns are the default ones, no objects"""
+    key = lambda p: (p.get("role"), tuple(round(float(x)) for x in p.get("pos", ())))
+    return not st.get("objects") and not st.get("modes") and \
+        sorted(map(key, st.get("points", []))) == sorted(map(key, default_points()))
+
+
 def layout_for(points, name):
+    s = _layout_for(points, name)
+    if untouched(s):   # a variant's set never edited (the editor shows one set at a time): the map's edited spawns instead
+        edited = [t for t in points["sets"] if not untouched(t)]
+        if edited:
+            return next((t for t in edited if "00" in [str(i) for i in t.get("ids", [])]), edited[0])
+    return s
+
+
+def _layout_for(points, name):
     """the file's variant's set: the one whose "modes" (the editor's set game types) has the file's game type, else
     the LP1 mode 0 set ('0<variant>')."""
     m = re.search(r"-(\d\d)$", name)

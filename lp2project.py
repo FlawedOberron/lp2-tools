@@ -226,17 +226,9 @@ def new_empty(out, name, game, tag=None, size="medium", ground=100.0):
     shutil.copytree(os.path.join(imp, ".preview", "stage"), os.path.join(dst, "stage"))
     for f in ("move.sbc1", "bullet.sbc1"):
         shutil.copyfile(os.path.join(imp, "assets", "collision.sbc1"), os.path.join(dst, f))
-    sets = []
-    for v in range(4):
-        pts = [dict(role="start", kind=1, pos=[round(1200 * math.sin(a), 2), 5.0, round(1200 * math.cos(a), 2)],
-                    yaw=round(math.degrees(a) + 180, 2)) for a in (i * math.tau / 16 for i in range(16))]
-        for role, x, yaw in (("team_a", -2000.0, 90.0), ("team_b", 2000.0, -90.0)):
-            pts += [dict(role=role, kind=1, pos=[x + 300 * (i // 4) * (1 if x > 0 else -1), 5.0, -450.0 + 300 * (i % 4)],
-                         yaw=yaw) for i in range(8)]
-        pts += [dict(role="k30", kind=1, pos=[-3000.0, 5.0, 0.0], yaw=90.0),
-                dict(role="k31", kind=1, pos=[3000.0, 5.0, 0.0], yaw=-90.0)]
-        pts += [dict(role="k40", kind=1, pos=[x, 5.0, z], yaw=0.0) for x, z in ((0, 2500), (0, -2500), (2500, 2500), (-2500, -2500))]
-        sets.append({"ids": ["0%d" % v], "explicit": True, "points": pts, "objects": []})
+    # one set for all four start-file variants (the game picks one per match): spawns placed once are used every time
+    import lp2layout
+    sets = [{"ids": ["00", "01", "02", "03"], "explicit": True, "points": lp2layout.default_points(), "objects": []}]
     json.dump({"explicit": True, "lp2": False, "units": "cm, LP2 map space (Y up)", "sets": sets},
               open(os.path.join(out, "layout.json"), "w"), indent=1)
     p = dict(format=FORMAT, version=VERSION,

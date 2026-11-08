@@ -979,3 +979,10 @@ share. First test modes: King of the Hill, Infection. Order: score / round end +
   at a material that didn't exist, the rebuild died (no .preview/geo.json), so the bake left the whole import out
   ("0 tris"). slug() is now stable; load_material moves an old "<name>_" folder over. Editor _slug the same.
 - Rebuild fills in maps a slot's own auto material lacks (never one picked by hand).
+
+## 2026-11-08 spawns per start-file variant
+- User: an exported map's spawns weren't used (FFA kill match). The project had 4 layout sets (ids 00-03, one per
+  start-file variant -00..-03, the game picks one per match); only 00 was edited, 01-03 kept the new-map ring at the
+  origin (y 5), so some matches spawned there.
+- lp2layout.layout_for: a set still untouched (default_points(), no objects, no modes) falls back to an edited one
+  (00 first). lp2project new maps: one set with ids 00 01 02 03 (the editor shows it under every layout button).
