@@ -220,7 +220,8 @@ def write_geo(prev, S, per_mesh, n, tex_files, max_tex, log=print):
             png_rel = "tex/" + tn.split("\\")[-1] + ".png"
             if not os.path.exists(os.path.join(prev, png_rel)):
                 png_rel = None
-        mats.append(dict(tex=png_rel, name=tn.split("\\")[-1] if tn else None, textures=slot_textures(S, raw, tex_files)))
+        mats.append(dict(tex=png_rel, name=tn.split("\\")[-1] if tn else None, textures=slot_textures(S, raw, tex_files),
+                         cutout=bool(struct.unpack_from("<I", raw, 0)[0] & 0x4000)))   # alpha-tested
     tex_bytes = sum(os.path.getsize(f) for f in tex_files.values())
     tree = lp2pieces.default_tree(S, per_mesh, n)
     blocks = np.stack([keys // nmat, keys % nmat, v0, vn, i0 * 3, tc * 3], 1).tolist()

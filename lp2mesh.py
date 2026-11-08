@@ -25,7 +25,8 @@ mesh, for files without usable UVs.
 import.json "blockout": true (rebuild --blockout 1; the editor's Blockout) ignores the file's materials and colours the
 faces by facing: walkable floors (up to the navmesh's 50 degrees) blockout_floor (orange), walls blockout_wall
 (grey-white), ceilings blockout_ceiling (dark grey); project materials made on first use (blockout grid, 1 m), so
-they can be recoloured like any other.
+they can be recoloured like any other. Window faces (import.json "windows": regions painted in the editor, rebuild
+--window; or a file material named window / glass) get blockout_window: a see-through cut-out grid, no bake shadow.
 No normal map = flat; no mask map = black (lp2stage.py's defaults for LP1 materials without them).
 "grid": M (--grid; 0 = off) replaces the mesh's UVs with world-projected ones, one texture tile per M metres of the
 piece's own space (each face takes the axis plane it faces most; a scaled piece stretches it).
@@ -349,7 +350,74 @@ def load_image(path, size):
 
 BLOCKOUT_ORANGE = (0.93, 0.47, 0.16)
 # import.json "blockout": material per facing (floor: normal y >= cos 50 degrees, the navmesh's walkable slope)
-BLOCKOUT_FACINGS = {"floor": (0.93, 0.47, 0.16), "wall": (0.82, 0.82, 0.80), "ceiling": (0.30, 0.30, 0.31)}
+BLOCKOUT_FACINGS = {"floor": (0.93, 0.47, 0.16), "wall": (0.82, 0.82, 0.80), "ceiling": (0.30, 0.30, 0.31),
+                    "window": (0.45, 0.78, 0.98)}
+# faces become "window" when painted in the editor (import.json "windows": seeds, see window_faces) or when their file
+# material's name says so; their material is a cut-out grid ("cutout": alpha-tested in game, word0 | 0x4000) that
+# casts no shadow in the bake ("shadow": false)
+WINDOW_NAMES = ("window", "glass")
+
+
+def window_image(colour, px=512):
+    """a see-through grid tile (1 m): a bold frame round the edge, bars every 25 cm, thin lines every 12.5 cm; the
+    panes clear -> RGBA uint8 (alpha 0 / 255: the game cuts it out)"""
+    y, x = np.mgrid[0:px, 0:px]
+    def d(step):
+        return np.minimum(np.minimum(x % step, step - 1 - x % step), np.minimum(y % step, step - 1 - y % step))
+    solid = (d(px) < 6) | (d(px // 4) < 2) | (d(px // 8) < 1)
+    base = np.array([255 * c for c in colour], np.float32)
+    img = np.where((d(px) < 6)[..., None], base * 0.7, base)
+    a = np.where(solid, 255, 0).astype(np.uint8)[..., None]
+    return np.concatenate([np.clip(img, 0, 255).astype(np.uint8), a], 2)
+
+
+def window_faces(P, T, seeds, scale):
+    """import.json "windows": [[x, y, z, nx, ny, nz, erase?]] in the editor's metres in the piece's own space (a click on
+    a face). Each paints (or with erase 1, unpaints) the flat region it lands in: the triangle under the point, and
+    those joined to it by edges that lie in its plane. -> bool per triangle"""
+    out = np.zeros(len(T), bool)
+    if not seeds or not len(T):
+        return out
+    Pc = P * scale / 100.0   # metres, as the editor's
+    a, b, c = Pc[T[:, 0]], Pc[T[:, 1]], Pc[T[:, 2]]
+    n = np.cross(b - a, c - a)
+    area2 = np.linalg.norm(n, axis=1)
+    n = n / np.maximum(area2, 1e-12)[:, None]
+    off = (n * a).sum(1)
+    key = [tuple(v) for v in np.round(Pc * 1000).astype(np.int64)]   # 1 mm weld for the edges
+    edges = {}
+    for t, tri in enumerate(T):
+        for i in range(3):
+            e = tuple(sorted((key[tri[i]], key[tri[(i + 1) % 3]])))
+            edges.setdefault(e, []).append(t)
+    for sd in seeds:
+        p, sn = np.array(sd[:3], float), np.array(sd[3:6], float)
+        erase = len(sd) > 6 and bool(sd[6])
+        dist = np.abs((n * p).sum(1) - off)
+        ok = (dist < 0.02) & ((n * sn).sum(1) > 0.9)
+        # inside the triangle (barycentric, a little slack)
+        v0, v1, v2 = b - a, c - a, p - a
+        d00, d01, d11 = (v0 * v0).sum(1), (v0 * v1).sum(1), (v1 * v1).sum(1)
+        d20, d21 = (v2 * v0).sum(1), (v2 * v1).sum(1)
+        den = np.maximum(d00 * d11 - d01 * d01, 1e-12)
+        bv = (d11 * d20 - d01 * d21) / den
+        bw = (d00 * d21 - d01 * d20) / den
+        ok &= (bv >= -0.01) & (bw >= -0.01) & (bv + bw <= 1.01)
+        hits = np.nonzero(ok)[0]
+        if not len(hits):
+            continue
+        start = int(hits[np.argmin(dist[hits])])
+        region, todo = {start}, [start]
+        while todo:
+            t = todo.pop()
+            tri = T[t]
+            for i in range(3):
+                for u in edges[tuple(sorted((key[tri[i]], key[tri[(i + 1) % 3]])))]:
+                    if u not in region and (n[u] * n[start]).sum() > 0.999 and abs(off[u] - off[start]) < 0.01:
+                        region.add(u)
+                        todo.append(u)
+        out[list(region)] = not erase
+    return out
 BLOCKOUT_FLOOR_Y = 0.6428
 
 
@@ -438,21 +506,29 @@ def ensure_blockout(project, facing):
         d = mat_dir(project, name)
         os.makedirs(d, exist_ok=True)
         colour = BLOCKOUT_FACINGS[facing]
-        Image.fromarray(blockout_image(colour)).save(os.path.join(d, "bm.png"))
-        save_material(project, name, {"colour": list(colour), "bm": "bm.png", "grid": 1.0})
+        if facing == "window":
+            Image.fromarray(window_image(colour)).save(os.path.join(d, "bm.png"))
+            save_material(project, name, {"colour": list(colour), "bm": "bm.png", "grid": 1.0, "cutout": True,
+                                          "shadow": False})
+        else:
+            Image.fromarray(blockout_image(colour)).save(os.path.join(d, "bm.png"))
+            save_material(project, name, {"colour": list(colour), "bm": "bm.png", "grid": 1.0})
     return name
 
 
-def split_facing(parts):
+def split_facing(parts, windows=None, scale=100.0):
     """import.json "blockout": each part's triangles split by facing -> parts whose "mat" is @floor / @wall /
-    @ceiling (vertices compacted per part, the file's UVs kept: the blockout materials' grid replaces them)"""
+    @ceiling / @window (vertices compacted per part, the file's UVs kept: the blockout materials' grid replaces them).
+    Windows: painted (windows: window_faces' seeds) or a file material named window / glass"""
     out = []
     for p in parts:
         P, T = p["P"], p["T"]
         n = np.cross(P[T[:, 1]] - P[T[:, 0]], P[T[:, 2]] - P[T[:, 0]])
         ny = n[:, 1] / np.maximum(np.linalg.norm(n, axis=1), 1e-12)
         kind = np.where(ny >= BLOCKOUT_FLOOR_Y, 0, np.where(ny <= -BLOCKOUT_FLOOR_Y, 2, 1))
-        for k, facing in enumerate(("floor", "wall", "ceiling")):
+        named = any(w in str(p.get("mat") or "").lower() for w in WINDOW_NAMES)
+        kind = np.where(window_faces(P, T, windows, scale) | named, 3, kind)
+        for k, facing in enumerate(("floor", "wall", "ceiling", "window")):
             sel = T[kind == k]
             if not len(sel):
                 continue
@@ -583,7 +659,7 @@ def build_import(game, project, name, log=print, d=None, mesh=None):
     scale = float(cfg.get("scale", 100.0))
     slots = cfg.setdefault("slots", {})
     if cfg.get("blockout"):
-        parts = split_facing(parts)
+        parts = split_facing(parts, cfg.get("windows"), float(cfg.get("scale", 100.0)))
         slots = {"@" + f: ensure_blockout(project, f) for f in BLOCKOUT_FACINGS}
     for p in parts:
         if p["mat"] not in slots:
@@ -614,6 +690,8 @@ def build_import(game, project, name, log=print, d=None, mesh=None):
             rec = bytearray(mat_tpl)
             struct.pack_into("<3I", rec, 12, *slot)
             struct.pack_into("<I", rec, 36, 1)
+            if (load_material(project, mname) or {}).get("cutout"):   # alpha-tested (the stock parts' cut-out twin)
+                struct.pack_into("<I", rec, 0, struct.unpack_from("<I", rec, 0)[0] | 0x4000)
             materials.append(bytes(rec))
             mat_index[mname] = len(materials) - 1
         P = p["P"] * scale
@@ -818,6 +896,13 @@ def cmd_rebuild(a):
             cfg["blockout"] = True
         else:
             cfg.pop("blockout", None)
+    if a.clear_windows:
+        cfg.pop("windows", None)
+    for w in a.window or []:   # x,y,z,nx,ny,nz[,1 = erase]: the editor's window paint (implies blockout)
+        v = [round(float(x), 4) for x in w.split(",")]
+        if len(v) in (6, 7):
+            cfg.setdefault("windows", []).append(v)
+            cfg["blockout"] = True
     for s, m in parse_mats(a.mat).items():
         cfg.setdefault("slots", {})[s] = slug(m)
     json.dump(cfg, open(os.path.join(d, "import.json"), "w"), indent=1)
@@ -911,6 +996,9 @@ def main():
         if c == "rebuild":
             s.add_argument("--unwrap", type=float, help="box-projected UVs, metres per texture tile (0 = the file's UVs)")
             s.add_argument("--blockout", type=int, choices=[0, 1], help="1: colour by facing (floor / wall / ceiling)")
+            s.add_argument("--window", action="append", help="x,y,z,nx,ny,nz[,1]: paint (1: unpaint) the flat region "
+                           "there as window (editor metres, the piece's space; turns blockout on)")
+            s.add_argument("--clear-windows", action="store_true", help="no painted windows")
         s.add_argument("--mat", action="append", help="SRC=MAT: the file's material SRC uses project material MAT")
     s = sub.add_parser("material")
     s.add_argument("--game", required=True)

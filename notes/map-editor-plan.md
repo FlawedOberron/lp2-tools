@@ -946,3 +946,29 @@ share. First test modes: King of the Hill, Infection. Order: score / round end +
 - 2026-11-03: Place tool gains "Data post" (marker {kind 3, role object, model om7101}; lp2layout.patch_objset clones
   the base map's post record per Data Post layout). Export checked: all 8 Datapost objsets carry it, spawn lists
   rebuilt. Empty maps had NO posts in Data Post before this. Q (Quick place) already worked on posts.
+
+## Handgun pickups: why they can't be grabbed (read from the decompile 2026-11-06, not yet confirmed in game)
+- DX11 uFighter::vf65 (0x9db4c0), the nearby-unit scan: for a player, each of 8 weapon slots with the same id (top 3 bytes, FUN_009b5f90) must pass FUN_00c7acc0 "can take more ammo" or there is no pickup prompt.
+- FUN_00c7acc0 (DX9 0xc6b0b0, retail DX11 0xc7ace0, retail DX9 0xc6aca0) answers no outright for kind 0x0c (also 0x1a-0x23, gear). So a player already carrying a handgun, as everyone does with Default Secondary = Handguns, can never pick one up.
+- Quick Resupply (rule quickResupply, src/mods/resupply.cpp, built 2026-11-06, untested in game): detours uFighter::vf65; running over a carried weapon transfers ammo and hides it (+0x2157 + clear +4 bit 0x800); handguns hide with no ammo. No network message: each machine hides on its own view.
+- STILL TO DO, user asked 2026-11-06: pressing pickup on a handgun you carry always takes it off the ground, whatever the rule. Don't let canTake (FUN_00c7acc0) say yes in the action: cThink::vf96 then zeroes the carried gun's ammo and swaps guns. Say yes only during vf65 for the prompt, and catch the press before vf96's action. The state that starts a weapon pickup (+0x9c) isn't identified yet; candidates are 1, 0x1e, 0x1f (state 1 may also be weapon switching). unit+0x1fa8 holds the nearest weapon, +0x17b0 is NOT the button.
+
+## Lightmaps (lp2lightmap.py, built 2026-11-06, shipped in v0.8.0, OFF by default, NOT TESTED IN GAME)
+- Project stage.light.lightmap = cm per texel (0 = vertex bake); Lighting window row. Export only: the editor's view still shows the vertex bake (preview is the next step).
+- Stock format, read from online00: vertex 0xB86DE023 = 0x49B4F022 with +24 lightmap uv f16x2 (v down, no flip); material word 1 0x144480 -> 0x44440, 0x144880 -> 0x44840; word 6 = the LM texture; 1024 DXT1 fmt 19, 6 mips, name <stage>-NNN_LM. Calibrated on online00's vertices shared by both mesh kinds: LM byte = 2 x vertex colour, so L = (byte/255)^2.2 and light above 1.0 clips (vertex colours could reach 4.6). mLightMapFacter / LightMapFactor exist in the exe if overbright is ever wanted; not read.
+- Only lit: materials with word 1 in that table, word 0 in LM_WORD0 (seen on stock), triangles within markers +- 30 m (the rest stays vertex lit). Max 32 pages = 23 MB, texels grow to fit.
+- Checked offline: Battlegrounds full compile (15 cm, 26 pages, 45.7 MB zip, names in arc match the model) and AZ-Tech (6.9 cm, 31 pages, 19 MB zip): top-down renders show straight shadow edges, side by side with vertex bake's triangle steps. FIRST IN-GAME CHECKS: does it load, is the level right (not black or doubled), DX9 too, memory on a big map.
+- Known: chart seams and DXT1 banding show faintly in soft indirect light. Bake time about 4.5 min on Battlegrounds.
+- Stock maps' projects with navmeshes: ~/Projects/LostPlanet2Maps/Stock/NN_Name (14, built 2026-11-06). The stock arcs still load no navmesh: only exported map packages carry one, so these are data until a loader for stock maps exists.
+- 2026-11-06 published: xlive test-2026-11-06c (f22771a), editor v0.8.0 (30a6fe5). Pistol pickup button still to do (see Handgun section). lp2-charedit .blend import uncommitted, no public repo.
+
+## Windows (2026-11-08, built, untested in game)
+- Bake: faces were all solid occluders (only dynamic pieces / hidden atoms skipped). Now project materials with
+  "shadow": false cast no shadows (lp2bake.no_shadow_textures; vertex bake and lightmap both use occ). Alpha-tested
+  textures (LP1 foliage etc.) still block fully: per-hit alpha in the tracer would be the real fix.
+- lp2mesh: blockout facing "window" (blockout_window: blue cut-out grid, frame 1 m / bars 25 cm / lines 12.5 cm, panes
+  clear; "cutout": true -> stage material word0 | 0x4000, "shadow": false). Faces: painted regions (import.json
+  "windows" seeds, rebuild --window / --clear-windows) or a file material named window / glass.
+- Editor: Mesh builder "Paint windows" (click = flat coplanar region, Shift = unpaint, Esc stops; rebuilds 0.8 s after
+  the last click) and "Clear windows"; preview shaders discard alpha < 0.5 on cutout materials (geo.json "cutout").
+- Unverified: the game drawing word0 | 0x4000 stage materials cut out (only seen on stock parts); one-sided faces.

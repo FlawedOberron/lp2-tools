@@ -26,7 +26,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 DEFAULTS = dict(source="lp1", sun=0.4, sky=1.0, sky_tint=[1.0, 1.0, 1.0], lights=1.0, glow=1.0, exposure=0.0,
-                min_light=0.01, bounce=1.0, bounces=2, samples=64, detail=0, emissive={})
+                min_light=0.01, bounce=1.0, bounces=2, samples=64, detail=0, lightmap=0, emissive={})
 LIVE = ("sun", "sky", "sky_tint", "lights", "glow", "exposure", "min_light")   # applied to the stored components
 STOCK_SUN, STOCK_SKY, STOCK_GROUND = [2.43] * 3, [0.152] * 3, [0.106] * 3
 CALIBRATION = 0.48    # linear light per unit of irradiance (fitted: Battlegrounds' default bake's median = LP1's)
@@ -670,6 +670,22 @@ def preview_arrays(prev, name="geo"):
     return g, P, N, C, idx, vmat
 
 
+def no_shadow_textures(folder):
+    """colour map names (lower case) of the project materials marked "shadow": false (lp2mesh.py: um_<name>_bm)"""
+    import glob, re
+    out = set()
+    for f in glob.glob(os.path.join(folder, "materials", "*", "material.json")):
+        try:
+            m = json.load(open(f))
+        except (OSError, ValueError):
+            continue
+        if m.get("shadow") is False:
+            name = os.path.basename(os.path.dirname(f)).lower()
+            name = re.sub(r"_+", "_", re.sub(r"[^a-z0-9_]", "_", name)).strip("_")[:24]   # lp2mesh.slug
+            out.add(f"um_{name}_bm")
+    return out
+
+
 def placed_copies(folder, geo, lib, skip=(), log=print):
     """the placed copies of imported meshes and library pieces (geometry copies with a "map"), in world space:
     [dict(k (copy index), map, atom, m, P cm, N, U, C, T, vmat (into mats), mats [dict(name, albedo)])]"""
@@ -773,6 +789,13 @@ def bake_preview(folder, log=print, library=None):
             f"{sum(len(c['T']) for c in copies)} triangles")
     cat = lambda i: np.concatenate([q[i] for q in parts])
     P, N, U, C, T, vmat, group, occ = (cat(i) for i in range(8))
+    # see-through materials (the project's "shadow": false, e.g. lp2mesh's blockout_window) cast no shadows
+    clear = no_shadow_textures(folder)
+    if clear:
+        see = np.array([str(m["name"] or "").lower() in clear for m in mats])
+        if see.any():
+            occ = np.where(see[vmat], 0.0, occ)
+            log(f"bake: {int(see[vmat].sum())} vertices of see-through materials cast no shadows")
     albedo = np.stack([m["albedo"] if m["albedo"] is not None else np.full(3, 0.5) for m in mats]).astype(np.float64)
     attrs = dict(P=P.astype(np.float64), N=N.astype(np.float64), U=U, C=C, vmat=vmat, group=group, occ=occ)
     n_in = len(P)
@@ -952,6 +975,15 @@ def bake_stage(model, folder, p, log=print, dynamic=None):
     key_full = _key(model_bytes, albedo.tobytes(), s, lights, {k: env.get(k) for k in ("sun", "sun_colour", "sky_colour", "ground_colour")},
                     ray_inputs["dyn"])
     full = os.path.join(cache_dir(), key_full + ".rModel")
+    if float(s.get("lightmap") or 0) > 0:   # into textures instead of the vertices (lp2lightmap.py)
+        import lp2lightmap
+        T = np.concatenate(Ts)
+        out = os.path.dirname(model)
+        stem = os.path.splitext(os.path.basename(model))[0]
+        tex_dir = S["textures"][0].rsplit("\\", 1)[0] if S["textures"] else ""
+        names, mats, meshes, pages = lp2lightmap.bake(attrs, T, S, albedo, emission_table(names, s), env, lights, s, out, stem, tex_dir, folder, p, log)
+        lp2stage.write_stage(model, names, mats, meshes)
+        return
     if os.path.exists(full):
         open(model, "wb").write(open(full, "rb").read())
         log("  baked light: unchanged, from the cache")
