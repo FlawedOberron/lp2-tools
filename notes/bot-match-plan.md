@@ -427,3 +427,17 @@ skip uOm71 collision in that ray or treat a post hit as through, and add a sides
 bots.cpp Checked(): an area a roaming bot (no target, so not fighting) went through more than 1 s after a shot counts
 as checked: that shot no longer makes noise goals (GoalUpdate) or fight-pass picks (RoamPoint). Reaching a noise goal
 marks its area checked ("checked the noise: nobody, moving on" in bot-log). Fresh shots there count again. Untested.
+
+## Weapon pickups / swaps (user, 2026-11-08; RE done, not built)
+- User: bots don't seek better weapons, and a pickup drops whatever is held. Want: value-ranked pickups (shotguns,
+  rockets over pistols), drop the worse weapon, per-personality slot preferences. Asked whether bots get their own
+  random loadouts: unknown; rules.cpp now logs "player N loadout ..." (record game+0x28[slot] +0x10, 8 ids 0x04KK00VV) at spawn.
+- RE (DX11): the bot's weapon target = plan +0x88c, set in FUN_00917b50 from FUN_009af7d0(character, float* dist, 0, 0,
+  1, exclude list plan+0x5a8, count plan+0x5a4): the NEAREST takeable weapon unit (unit +4 & 7 == 2, flags 0x4800,
+  +0x20d8 / +0xce0 / +0x1938 clear, FUN_009a9710 can-take per slot), within DAT_0140d52c, about level. Other callers:
+  FUN_0091b520, FUN_009b0020. Resolve case 0x11 reads plan +0x88c.
+- Plan: detour FUN_009af7d0 for bots only: call the original with a growing exclude list to get the nearest ~6, score
+  value(kind: heavy 0x33/rockets > short 0x31 > long 0x32 / standard 0x30 > special 0x34 > handgun 0x0c; ammo left;
+  personality bias) - distance, skip ones worse than both carried. Swap: in the HmAction detour, pad action 12 (pick
+  up) with the held weapon better than the other -> action 14 (change) first, so the worse one is dropped. Needs the
+  4 builds' addresses (sigport).
