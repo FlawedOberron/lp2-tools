@@ -422,3 +422,8 @@ and leaves 0 when the ray result's +0x3d5 (static collision hit, pos +0x390) is 
 as a wall. Not yet sure the AI uses this cursor (FUN_00f99100(0) may be the local player's lock-on result). Next: find where
 bots' +0x1a8 cursor gets its ray (0x98xxxx: param_1[0x6a]+0x19c = 1 at 0098.c:8927) and the collision filter; then either
 skip uOm71 collision in that ray or treat a post hit as through, and add a sidestep (HmAction dodge direction already hooked).
+
+## Noise checking (user, 2026-11-08: bots hung around noise instead of checking and moving on)
+bots.cpp Checked(): an area a roaming bot (no target, so not fighting) went through more than 1 s after a shot counts
+as checked: that shot no longer makes noise goals (GoalUpdate) or fight-pass picks (RoamPoint). Reaching a noise goal
+marks its area checked ("checked the noise: nobody, moving on" in bot-log). Fresh shots there count again. Untested.

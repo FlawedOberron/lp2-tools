@@ -80,3 +80,13 @@ Show text: the queue list on the HUD. No tags required (just 2+ markers named ar
   .preview/navzones.json (names + tags; needs Build Navmesh first).
 - Unverified: projection handedness (right = forward x up assumed) and fov being vertical; if the fence is mirrored or
   scaled wrong, that's where.
+
+## Decisions (user, 2026-11-08)
+- HUD replacement (crosshair, weapon / ammo panel, radar, health / T-ENG...) is for control, so it is essential only in
+  custom modes: a mode replaces the stock elements it wants (hide the stock one: Flash clip / native draw; read the
+  data; draw ours on the overlay), stock modes and the campaign keep the stock HUD. Suggested order: radar (blips
+  decoded in radar.cpp), weapon / ammo, health / T-ENG, crosshair last (per-weapon, spread, lock-on, scopes; VS
+  cockpit stays stock at first).
+- Our modified Survival (rules.cpp lives / rounds on the stock modes) should become a custom mode later: a .lp2mode
+  using a few menu variables (Settings rows), e.g. Lives, built on the lives core. Needs the mod runtime for
+  .lp2mode graphs first.
