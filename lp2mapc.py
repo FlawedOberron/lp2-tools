@@ -242,6 +242,7 @@ SCRIPT_TYPES = {
     "branch": (("in",), ("1", "2", "3", "4", "5", "6"), ("target",)),
     "chance": (("in",), ("yes", "no"), ()),
     "cooldown": (("in", "reset"), ("then", "blocked"), ("seconds",)),
+    "zoneoutline": (("show", "hide"), ("then",), ("text", "colour", "seconds")),
 }
 SCRIPT_VEC_NUMBER_OPS = ("length", "getx", "gety", "getz", "getyaw")   # vector ops whose result is a number
 SCRIPT_VEC_B_VECTOR = ("add", "sub")                                    # ops whose B is a vector (else a number)
@@ -255,7 +256,7 @@ SCRIPT_ITEM_NODES = ("list", "listget", "foreach")   # their "player" is a list 
 SCRIPT_OPERANDS = {"set": ("a",), "random": ("a", "b"), "math": ("a", "b"), "compare": ("a", "b"), "setvalue": ("a",),
                    "listremove": ("a",), "listget": ("a",), "playercheck": ("a",), "playeract": ("a",),
                    "loop": ("a", "b"), "spawn": ("a",), "vector": ("a", "b"),
-                   "switch": ("a",), "chance": ("a",)}
+                   "switch": ("a",), "chance": ("a",), "zoneoutline": ("a",)}
 
 
 def script_volume_ids(p):

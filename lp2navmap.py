@@ -173,6 +173,48 @@ LAUNCH_STEP = 1 / 60.0  # s: the launch trajectory's step (force.cpp moves a car
 EARTH = 980.0           # cm/s2 (force.cpp kEarth), times the map's gravity
 
 
+def zone_outline(tri, v):
+    """a zone's outer edges (edges of its triangles no other of its triangles shares), chained into loops of points
+    (cm, rounded); a loop that doesn't close ends where its edges run out"""
+    count = {}
+    for t in tri:
+        for e in range(3):
+            a, b = int(t[e]), int(t[(e + 1) % 3])
+            k = (min(a, b), max(a, b))
+            count[k] = count.get(k, 0) + 1
+    nxt = {}
+    for (a, b), c in count.items():
+        if c == 1:
+            nxt.setdefault(a, []).append(b)
+            nxt.setdefault(b, []).append(a)
+    loops, seen = [], set()
+    for start in list(nxt):
+        if all((min(start, x), max(start, x)) in seen for x in nxt[start]):
+            continue
+        loop, cur, prev = [start], start, None
+        while True:
+            options = [x for x in nxt[cur] if x != prev and (min(cur, x), max(cur, x)) not in seen]
+            if not options:
+                break
+            x = options[0]
+            seen.add((min(cur, x), max(cur, x)))
+            prev, cur = cur, x
+            loop.append(cur)
+            if cur == start:
+                break
+        if len(loop) >= 3:
+            pts = [np.asarray(v[i], np.float64) for i in loop]
+            keep = [pts[0]]
+            for k in range(1, len(pts) - 1):   # drop points on a straight run (under ~3 degrees and 20 cm of rise off it)
+                d1, d2 = pts[k] - keep[-1], pts[k + 1] - pts[k]
+                n1, n2 = np.linalg.norm(d1), np.linalg.norm(d2)
+                if n1 < 1e-3 or n2 < 1e-3 or np.dot(d1, d2) / (n1 * n2) < 0.9986 or abs(d1[1] / n1 - d2[1] / n2) * n2 > 20:
+                    keep.append(pts[k])
+            keep.append(pts[-1])
+            loops.append([[round(float(c), 1) for c in q] for q in keep])
+    return loops
+
+
 def zones_and_links(v, poly, keep, verts, tris, p, grapple_scan=GRAPPLE_SCAN):
     """The playable navmesh cut into zones (bots route zone to zone) and the links between them, each with how it's
     crossed: walk (shared edge, both ways), jump (a gap or step up to JUMP_UP, both ways), drop (down a ledge, one way),
@@ -202,6 +244,7 @@ def zones_and_links(v, poly, keep, verts, tris, p, grapple_scan=GRAPPLE_SCAN):
     # manual zones
     zone = np.full(n, -1)
     names = []
+    tags = []
     for vol in lp2mapc.all_parts(p):
         nm = vol.get("zone")
         if not nm:
@@ -210,6 +253,7 @@ def zones_and_links(v, poly, keep, verts, tris, p, grapple_scan=GRAPPLE_SCAN):
         if inside.any():
             zone[inside] = len(names)
             names.append(str(nm))
+            tags.append([str(t) for t in vol.get("zone_tags", []) if str(t).strip()])
     # automatic: per grid cell, patches joined by shared edges inside the cell
     cell = [tuple(c) for c in np.floor(cen[:, [0, 2]] / ZONE_CELL).astype(np.int64)]
     for i in range(n):
@@ -217,6 +261,7 @@ def zones_and_links(v, poly, keep, verts, tris, p, grapple_scan=GRAPPLE_SCAN):
             continue
         z = len(names)
         names.append("")
+        tags.append([])
         zone[i] = z
         stack = [i]
         while stack:
@@ -247,6 +292,7 @@ def zones_and_links(v, poly, keep, verts, tris, p, grapple_scan=GRAPPLE_SCAN):
     renum = {z: k for k, z in enumerate(used)}
     zone = np.array([renum[z] for z in zone])
     names = [names[z] for z in used]
+    tags = [tags[z] for z in used]
     nz = len(used)
     out_zones = []
     for z in range(nz):
@@ -255,8 +301,8 @@ def zones_and_links(v, poly, keep, verts, tris, p, grapple_scan=GRAPPLE_SCAN):
         mean = (cen[m] * w[:, None]).sum(0)
         at = cen[m[np.argmin(np.linalg.norm(cen[m] - mean, axis=1))]]   # a real spot on the mesh near the middle
         lo, hi = P[m].reshape(-1, 3).min(0), P[m].reshape(-1, 3).max(0)
-        out_zones.append({"name": names[z] or "z%d" % z, "pos": [round(float(c), 1) for c in at],
-                          "size": [round(float(c), 1) for c in hi - lo]})
+        out_zones.append({"name": names[z] or "z%d" % z, "tags": tags[z], "pos": [round(float(c), 1) for c in at],
+                          "size": [round(float(c), 1) for c in hi - lo], "outline": zone_outline(tri[m], v)})
     links = {}
 
     def link(za, zb, kind, a, b, length=None):
