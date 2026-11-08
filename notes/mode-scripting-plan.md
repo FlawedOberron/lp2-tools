@@ -121,3 +121,13 @@ Show text: the queue list on the HUD. No tags required (just 2+ markers named ar
 ## 2026-11-08 mode -> map events (built, untested in game)
 - Mode action "modeevent" (Fire map event: text = name, player) runs the map script's "onmodeevent" nodes (On mode event)
   with that name, case ignored, setting their player variable (scripts.cpp MapModeEvent; host). Maps without one ignore it.
+
+## GameModes packages (2026-11-08 night, built, untested in game)
+- Game: `GameModes\<name>.zip` = mode.json (manifest: format 1, name, description, author, base, graph, settings,
+  requires, content {pickups, weapons, vehicles, files}) + mode.lp2mode (the compiled mode). scripts.cpp
+  ModeFromPackage: mode.txt's name finds GameModes\<name>.zip, else any GameModes zip whose manifest name matches
+  (case-insensitive); else the old Modes\<name>.lp2mode. Log "mods: mode: package ...".
+- lp2mode.py --package DIR writes it (+ files from a "<name>.content" folder next to the source); the editor's
+  save passes <game>/GameModes. Both game copies have Survival / Survival FFA packaged.
+- Later: the manifest's content (custom pickups, weapons, vehicles: see jeep-plan.md; nativePC files unpacked like
+  map packages), a lobby picker listing GameModes.

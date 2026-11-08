@@ -173,3 +173,14 @@ bots.cpp: map start points grouped on a 40 m x/z grid -> areas (goal = point nea
   UiAddLayer(name, draw(w,h)); UiFont(large). No new DLL imports.
 - First layer: rules.cpp RoundCounter (top centre, Rounds on + battle HUD updated in the last 0.5 s): "ROUND n" / "BEST OF n", own wins blue, top other red.
 - Logs: "mods: ui: overlay hooked", "drawing on DX9/DX11 at WxH", font lines. Untested in game.
+
+## Hit Stagger: split + increase (user, 2026-11-08)
+- Report: Reduced / Low / Off did nothing against assault rifle fire. The hook only scaled the shrink pool
+  (FUN_009b72a0). uCharacterBase::vf151 (DX11 0x9d4210, uHuman::vf151 just calls it) takes points from three pools:
+  shrink (+0xc/+0xe, fail sets d7c 0x10), blown (+0x12/+0x14, FUN_009b7350, d7c 0x20), third (+0x18/+0x1a,
+  FUN_009b7400, fail -> FUN_009b8bb0: d7c2 0x1000 + vtable 0x528). Now all three are scaled, log line
+  "hit stagger: <pool> points ran out" says which one a rifle hit depletes (built 2026-11-08, untested).
+- Want: separate rows for anchor / bullet / explosion / melee stagger, each also with increase options
+  (e.g. an anchor hit sends players flying = force the blown pool / a launch, not just a stumble). Needs: the hit's
+  attack type from the hit param (iVar29 in vf151, cHitParam) to pick the scale; "increase" = scale > 1 on the
+  pools, and for "flying" a forced blown reaction.

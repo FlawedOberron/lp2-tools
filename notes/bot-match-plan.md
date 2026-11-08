@@ -447,3 +447,16 @@ marks its area checked ("checked the noise: nobody, moving on" in bot-log). Fres
   short 78, long 68, standard 60, support 50, handgun 20, x archetype leanings. HmAction: pickup press (pad +0x1c8 0x2000)
   -> change (0x8) while the held is the better (not when a handgun is one of the two: unknown whether it can be dropped).
   Logs (bot log on): "weapons near ... goes for / skips", "switches to its worse weapon before picking up".
+
+## Link crossing: jump / grapple / launch (2026-11-08, built, untested in game)
+- The think IS the bot's pad: FUN_0093b1b0 (think body) zeroes think +0x1c8/+0x1cc, runs the plan (cAIPlanMoveHmAction
+  vf7: case 7 = jump |0x2, case 0x10 = anchor |0x4, 0xc pickup 0x2000, 0xe change 0x8), then the unit reads them.
+  So bots.cpp ThinkBody ORs presses in after the original (Traverse()).
+- Resolve stores the bot's current zone link (kind, a, b, linkSeen) in RoamGoal; only while roaming (target 20).
+- Jump links: press jump within 1.3 m of a (not seams: a-b < 60 cm across and < 45 cm up). Stalled 1.8 s on any
+  non-launch link: one unstick jump. Launch: walk in, force.cpp throws.
+- Grapple: kBotsGrapple = true (within RulesGrappleRange). Within 3 m of a: bot cursor (think +0x1a8 cVirtualCursor,
+  mCursorPos +0x60, mCursorTargetPos +0x70; same in DX9) set to b for 350 ms, then anchor 0x4. Log "fires the anchor",
+  then "grapple climbed / didn't climb" after 1.5 s. Unknown: whether the anchor follows the cursor (else find uHuman's
+  anchor aim source; cAITerrainAnchorAnalyzer exists but uses stock terrain data).
+- Guardian nav (user's map): 33 zones, 13 groups without grapple; ~half of its 44 jump links are seams.
