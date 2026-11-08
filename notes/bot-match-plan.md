@@ -428,7 +428,7 @@ bots.cpp Checked(): an area a roaming bot (no target, so not fighting) went thro
 as checked: that shot no longer makes noise goals (GoalUpdate) or fight-pass picks (RoamPoint). Reaching a noise goal
 marks its area checked ("checked the noise: nobody, moving on" in bot-log). Fresh shots there count again. Untested.
 
-## Weapon pickups / swaps (user, 2026-11-08; RE done, not built)
+## Weapon pickups / swaps (user, 2026-11-08; built, untested in game)
 - User: bots don't seek better weapons, and a pickup drops whatever is held. Want: value-ranked pickups (shotguns,
   rockets over pistols), drop the worse weapon, per-personality slot preferences. Asked whether bots get their own
   random loadouts: unknown; rules.cpp now logs "player N loadout ..." (record game+0x28[slot] +0x10, 8 ids 0x04KK00VV) at spawn.
@@ -441,3 +441,9 @@ marks its area checked ("checked the noise: nobody, moving on" in bot-log). Fres
   personality bias) - distance, skip ones worse than both carried. Swap: in the HmAction detour, pad action 12 (pick
   up) with the held weapon better than the other -> action 14 (change) first, so the worse one is dropped. Needs the
   4 builds' addresses (sigport).
+- Built (bots.cpp, Improved brains only): the AI calls of the search (DX11 call sites 917bf1 / 91b644; DX9 908261 /
+  90bcb4; DX11 1.1 917dd1 / 91b8d4; DX9 1.1 908371 / 90be74) go to WeaponSearch: nearest 6, gain = value - worse carried
+  (empty = 0; same id = ammo, only when that one is dry), score gain - 1/m; nothing better -> no target. Values: heavy 88,
+  short 78, long 68, standard 60, support 50, handgun 20, x archetype leanings. HmAction: pickup press (pad +0x1c8 0x2000)
+  -> change (0x8) while the held is the better (not when a handgun is one of the two: unknown whether it can be dropped).
+  Logs (bot log on): "weapons near ... goes for / skips", "switches to its worse weapon before picking up".
