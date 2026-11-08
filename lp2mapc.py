@@ -262,6 +262,9 @@ SCRIPT_TYPES = {
     "endround": (("in",), (), ("scoreof",)),
     "endmatch": (("in",), (), ("scoreof",)),
     "showtext": (("in",), ("then",), ("text", "showto", "style", "font", "colour", "seconds")),
+    # mode -> map: a mode's "Fire map event" runs the map script's "On mode event" nodes of the same name (text)
+    "modeevent": (("in",), ("then",), ("text",)),
+    "onmodeevent": ((), ("then",), ("text",)),
 }
 SCRIPT_VEC_NUMBER_OPS = ("length", "getx", "gety", "getz", "getyaw")   # vector ops whose result is a number
 SCRIPT_VEC_B_VECTOR = ("add", "sub")                                    # ops whose B is a vector (else a number)
@@ -271,7 +274,7 @@ SCRIPT_VAR_NODES = ("set", "if", "random", "math", "listcount", "playerget", "lo
                     "playerinfo")
 SCRIPT_PLAYER_NODES = ("enter", "list", "listget", "foreach", "playercheck", "playerget", "playeract", "getmarker",
                        "spawn", "teleport", "onspawn", "spawnplayer", "holdplayer", "eliminate", "queue", "score",
-                       "playerinfo", "teamlist", "endround", "endmatch", "showtext")
+                       "playerinfo", "teamlist", "endround", "endmatch", "showtext", "modeevent", "onmodeevent")
 SCRIPT_LIST_NODES = ("players", "list", "listremove", "listget", "listcount", "foreach", "findmarkers", "queue", "teamlist")
 SCRIPT_ITEM_NODES = ("list", "listget", "foreach")   # their "player" is a list entry: a marker for a markers list
 SCRIPT_OPERANDS = {"set": ("a",), "random": ("a", "b"), "math": ("a", "b"), "compare": ("a", "b"), "setvalue": ("a",),

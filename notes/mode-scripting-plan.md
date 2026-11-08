@@ -117,3 +117,7 @@ Show text: the queue list on the HUD. No tags required (just 2+ markers named ar
   ties); g_roundScore gets the round's tier (RoundEnd's winner). Game points are never touched -> top killer still earns.
 - playerinfo "score" = the mode score. Not yet: "kills" / game points in playerinfo (needs 0x103c per build), a mode
   "award points" node (writing the game score would change career points).
+
+## 2026-11-08 mode -> map events (built, untested in game)
+- Mode action "modeevent" (Fire map event: text = name, player) runs the map script's "onmodeevent" nodes (On mode event)
+  with that name, case ignored, setting their player variable (scripts.cpp MapModeEvent; host). Maps without one ignore it.
