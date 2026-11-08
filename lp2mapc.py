@@ -400,7 +400,9 @@ def gravity_manifest(p):
     """map.json gravity and screen settings for the xlive mod (gravity.cpp, post.cpp): environment jump_packs /
     underwater / gravity, gravity volumes, post-process volumes, water volumes (water.cpp: water up to the box's top),
     damage volumes (damage.cpp: "damage": {player, vs: % of full health per second; player_kill / vs_kill: at once}),
-    one-way walls (oneway.cpp: "oneway": {players, vs, bullets, grenades, akrid}: crossed along the box's arrow only)"""
+    one-way walls (oneway.cpp: "oneway": {players, vs, bullets, grenades, akrid}: crossed along the box's arrow only),
+    force volumes (force.cpp: "force": {mode, vector (m/s, or m/s per second for continuous), local, flags as one-way's}:
+    map.json "force" in cm, game axes, turned by the yaw when local)"""
     env, out = p.get("environment", {}), {}
     if env.get("jump_packs"):
         out["jump_packs"] = True
@@ -415,6 +417,7 @@ def gravity_manifest(p):
     water = []
     damage = []
     oneway = []
+    force = []
     sids = script_volume_ids(p)
     for v in all_parts(p):
         lo, hi = volume_local(v)
@@ -436,6 +439,17 @@ def gravity_manifest(p):
             flags = {k: True for k in ("players", "vs", "bullets", "grenades", "akrid") if v["oneway"].get(k)}
             if flags:
                 oneway.append(dict(min=lo, max=hi, **flags, **turn))
+        if v.get("force"):
+            q = v["force"]
+            flags = {k: True for k in ("players", "vs", "bullets", "grenades", "akrid") if q.get(k)}
+            x, y, z = (float(c) * 100.0 for c in q.get("vector", [0, 0, 0]))
+            if q.get("local", True):   # the editor's turn (Godot's rotation about y), as volume_corners
+                a = math.radians(volume_yaw(v))
+                c, s_ = math.cos(a), math.sin(a)
+                x, z = x * c + z * s_, -x * s_ + z * c
+            mode = q.get("mode", "continuous")
+            if flags and (x or y or z) and mode in ("continuous", "impulse", "velocity"):
+                force.append(dict(min=lo, max=hi, mode=mode, force=[round(x, 3), round(y, 3), round(z, 3)], **flags, **turn))
         if volume_gravity(v) is not None:
             vols.append(dict(min=lo, max=hi, gravity=volume_gravity(v), **turn))
         if v.get("post"):
@@ -453,6 +467,8 @@ def gravity_manifest(p):
         out["damage_volumes"] = damage
     if oneway:
         out["oneway_volumes"] = oneway
+    if force:
+        out["force_volumes"] = force
     return out
 
 
@@ -766,6 +782,89 @@ def script_preload(game, p):
     return sorted(have[w] for w in want if w in have)
 
 
+NAV_INPUTS = ("base", "collision", "geometry", "layout", "source", "stage", "terrains", "volumes")
+
+
+def nav_stamp(folder):
+    """A hash of what the navmesh is built from: the project's parts that matter, the files they name (by content, big
+    ones by size and time) and the tools. Environment, lights and so on don't count, nor does the save itself."""
+    p = json.load(open(os.path.join(folder, "project.json")))
+    h = hashlib.sha1()
+    part = {k: p.get(k) for k in NAV_INPUTS}
+    part["tag"], part["kill"] = (p.get("info") or {}).get("tag"), (p.get("environment") or {}).get("kill_floor")
+    h.update(json.dumps(part, sort_keys=True).encode())
+    names = {os.path.join(HERE, t) for t in ("lp2navgen.py", "lp2navmap.py")}
+    def walk(x):
+        if isinstance(x, dict):
+            for v in x.values():
+                walk(v)
+        elif isinstance(x, list):
+            for v in x:
+                walk(v)
+        elif isinstance(x, str) and x:
+            q = os.path.join(folder, x)
+            if os.path.isfile(q):
+                names.add(q)
+    walk(part)
+    for q in sorted(names):
+        st = os.stat(q)
+        h.update(os.path.basename(q).encode())
+        if st.st_size < 4 << 20:
+            h.update(open(q, "rb").read())
+        else:
+            h.update(f"{st.st_size} {st.st_mtime_ns}".encode())
+    return h.hexdigest()
+
+
+def ensure_navmesh(folder, tag, library, log=print):
+    """The bots' navmesh, built when it's missing or the map changed since. A failed build warns and the export goes on
+    with what's there. Returns (list file, way file) or None."""
+    nav, prev = os.path.join(folder, "assets", "nav"), os.path.join(folder, ".preview")
+    files = (os.path.join(nav, f"List_{tag}.rAINavigationMeshList"), os.path.join(nav, f"Way_{tag}.rAIWayPoint"))
+    stamp_file = os.path.join(prev, "navmesh.stamp")
+    have = all(os.path.isfile(f) for f in files) and os.path.isfile(os.path.join(prev, "navmesh.bin"))
+    stamp = nav_stamp(folder)
+    if have and os.path.isfile(stamp_file) and open(stamp_file).read().strip() == stamp:
+        log("navmesh: up to date")
+        return files
+    report(0.01, "navmesh")
+    log("navmesh: building" + (" (the map changed)" if have else ""))
+    try:
+        out = tool("lp2navmap.py", folder, *(["--library", library] if library else []), progress=(0.01, 0.05))
+    except SystemExit as e:
+        log(f"navmesh: WARNING, the build failed, {'the last one is used' if have else 'bots will not move on this map'}: {e}")
+        return files if have else None
+    res = next((json.loads(l[8:]) for l in out.splitlines() if l.startswith("@result ")), None)
+    if res:   # the editor shows these (it reads .preview/navmesh.json after the export)
+        raw = json.load(open(os.path.join(folder, "project.json")))
+        raw["navmesh"] = res
+        json.dump(raw, open(os.path.join(folder, "project.json"), "w"), indent=1)
+        log(f"navmesh: {res['polygons']} polygons, {res['dropped']} outside the playable area")
+    return files
+
+
+def add_navmesh(A, tag, files, folder, W, log=print):
+    """what a bot area has and an online one doesn't: the navmesh list, way points and intelligence box, named in the
+    area's scenery list. Named by the project's tag, so nothing here depends on the slot the map lands in."""
+    import lp2nav
+    d = W("nav")
+    os.makedirs(d, exist_ok=True)
+    names = {29: f"tool\\AI\\NaviMesh\\{tag}\\List_{tag}", 30: f"tool\\AI\\NaviMesh\\{tag}\\Way_{tag}", 31: f"tool\\AI\\AreaAI\\{tag}"}
+    with open(os.path.join(folder, ".preview", "navmesh.bin"), "rb") as f:
+        n = struct.unpack("<I", f.read(4))[0]
+        tri = np.frombuffer(f.read(n * 36), "<f4").reshape(-1, 3)
+    box = os.path.join(d, "box.rIntelligenceBox")
+    open(box, "wb").write(lp2nav.empty_intelligence_box((float(tri[:, 0].min()), float(tri[:, 2].min())), (float(tri[:, 0].max()), float(tri[:, 2].max()))))
+    lists = {}
+    for nm, b in entries(A["main"]).get("rScrList", []):
+        q = os.path.join(d, base(nm) + ".rScrList")
+        open(q, "wb").write(lp2nav.scrlist_add(b, sorted(names.items())))
+        lists[base(nm) + ".rScrList"] = q
+    put(A["main"], lists)
+    put(A["main"], {names[29] + ".rAINavigationMeshList": files[0], names[30] + ".rAIWayPoint": files[1], names[31] + ".rIntelligenceBox": box}, add=True)
+    log(f"navmesh packaged: {os.path.getsize(files[0]) // 1024} + {os.path.getsize(files[1]) // 1024} + {os.path.getsize(box) // 1024} KB")
+
+
 def compile_project(game, folder, out_zip, work=None, log=print, library=None):
     p = lp2project.load(folder)
     bad = lp2project.check(folder)
@@ -788,6 +887,7 @@ def compile_project(game, folder, out_zip, work=None, log=print, library=None):
         stock_package(game, pkg, stock_no)
         A = {k: os.path.join(pkg, "nativePC", v) for k, v in ARCS.items()}
         stock = {k: entries(v) for k, v in A.items()}
+        nav = ensure_navmesh(folder, tag, library, log)
         radar = lp2radar.build(folder, p, log)
         if radar:
             off_mesh_warning(folder, p, radar["tris"], log)
@@ -798,6 +898,8 @@ def compile_project(game, folder, out_zip, work=None, log=print, library=None):
             log("radar: no navmesh, the radar stays blank (build one in the Navmesh window)")
         strip_base(A, stock, env, W, log, radar)
         add_weather(game, A, env, W, log)
+        if nav:
+            add_navmesh(A, tag, nav, folder, W, log)
         tmpl = {}
         os.makedirs(W("tmpl"), exist_ok=True)
         for k, cls, name in (("scr", "rModel", "online00"), ("scr", "rCollision", "atarionline00"),
@@ -999,6 +1101,12 @@ def compile_project(game, folder, out_zip, work=None, log=print, library=None):
         manifest = dict(name=info["name"], base=0, number=0, size=info["size"], preload=preload)
         manifest.update(gravity_manifest(p))
         manifest.update(script_manifest(p, log))
+        nz_file = os.path.join(folder, ".preview", "navzones.json")
+        if os.path.isfile(nz_file):   # the bots' zones and links (lp2navmap): bots.cpp routes over them
+            nz = json.load(open(nz_file))
+            if nz.get("zones"):
+                manifest["nav_zones"] = nz
+                log(f"  bot zones: {len(nz['zones'])}, links {len(nz.get('links', []))}")
         if p.get("terrains"):   # damage-painted terrain layers: boxes over their cells
             import lp2terrain
             tdmg = lp2terrain.damage_volumes(folder, p, log)
