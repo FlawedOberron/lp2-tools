@@ -142,7 +142,7 @@ def pot(img):
 
 def write_stage(dst, textures, materials, meshes):
     """Write a static stage rModel. meshes: [dict(mat, verts (n, 28) u8 rows (or a list of 28 B), tris [(a, b, c)])]"""
-    meshes = [dict(mat=m["mat"], verts=np.frombuffer(b"".join(m["verts"]), np.uint8).reshape(-1, STRIDE)
+    meshes = [dict(mat=m["mat"], fmt=m.get("fmt", FMT), verts=np.frombuffer(b"".join(m["verts"]), np.uint8).reshape(-1, STRIDE)
                    if isinstance(m["verts"], list) else np.asarray(m["verts"], np.uint8),
                    tris=np.asarray(m["tris"], np.int64).reshape(-1, 3)) for m in meshes]
     meshes = [m for m in meshes if len(m["tris"])]
@@ -193,7 +193,7 @@ def write_stage(dst, textures, materials, meshes):
     for k, m in enumerate(recs):
         n = len(m["verts"])
         mesh_block += struct.pack("<HHIBBBBIIIIIIBBHHHI", 0xFDF7, n, (k + 1) | m["mat"] << 12 | 0xFF << 24, 1, 0, STRIDE, 3,
-                                  m["vstart"], m["voff"], FMT, m["istart"], m["icount"], 0, 1, 0, k + 1,
+                                  m["vstart"], m["voff"], m.get("fmt", FMT), m["istart"], m["icount"], 0, 1, 0, k + 1,
                                   m["vstart"], m["vstart"] + n - 1, 0)
     boxes = bytearray(struct.pack("<I", len(recs)))
     for m in recs:

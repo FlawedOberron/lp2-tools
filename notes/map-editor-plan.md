@@ -972,3 +972,10 @@ share. First test modes: King of the Hill, Infection. Order: score / round end +
 - Editor: Mesh builder "Paint windows" (click = flat coplanar region, Shift = unpaint, Esc stops; rebuilds 0.8 s after
   the last click) and "Clear windows"; preview shaders discard alpha < 0.5 on cutout materials (geo.json "cutout").
 - Unverified: the game drawing word0 | 0x4000 stage materials cut out (only seen on stock parts); one-sided faces.
+
+## 2026-11-08 glTF import fixes
+- Spec-gloss glTF (KHR_materials_pbrSpecularGlossiness, Sketchfab): diffuseTexture / diffuseFactor read as the base map.
+- slug() cut at 24 after stripping "_" -> names could end in "_" and re-slugging dropped it: the import's slot pointed
+  at a material that didn't exist, the rebuild died (no .preview/geo.json), so the bake left the whole import out
+  ("0 tris"). slug() is now stable; load_material moves an old "<name>_" folder over. Editor _slug the same.
+- Rebuild fills in maps a slot's own auto material lacks (never one picked by hand).

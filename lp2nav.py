@@ -309,5 +309,25 @@ def main(argv):
     return 0
 
 
+def empty_intelligence_box(lo, hi):
+    """An rIntelligenceBox with no boxes (DX11 rIntelligenceBox::vf9, FUN_00fd2bc0): "IBL\\0", 0x24, box count, the bounds
+    as max x y z then min x y z (stock has y 0), then the lookup grid of 1024 x 16 box numbers, -1 when unused."""
+    return (struct.pack("<4sII", b"IBL\0", 0x24, 0) + struct.pack("<6f", hi[0], 0.0, hi[1], lo[0], 0.0, lo[1])
+            + b"\xff" * (1024 * 16 * 4))
+
+
+def scrlist_add(b, items):
+    """b (rScrList) with (type, name) entries in its first unused slots. Stock bot areas: 29 navmesh list, 30 way
+    points, 31 intelligence box, each with zero parameters."""
+    import xfsedit
+    x = xfsedit.parse(b)
+    free = [e for e in x["root"]["mpArray"] if e["mType"] == [0] and e["mListName"] in ([""], [])]
+    if len(free) < len(items):
+        raise SystemExit("the scenery list has no free entries for the navmesh")
+    for e, (kind, name) in zip(free, items):
+        e["mType"], e["mListName"], e["mPara1"], e["mPara2"], e["mPara3"], e["mPara4"] = [kind], [name], [0], [0], [0], [0]
+    return xfsedit.write(x)
+
+
 if __name__ == '__main__':
     sys.exit(main(sys.argv))

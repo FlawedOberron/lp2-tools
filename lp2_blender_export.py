@@ -620,6 +620,10 @@ def export_sets(outdir, names=None):
             # the part (or set) collection says lp2_effects = "template"
             if str(col.get("lp2_effects", root.get("lp2_effects", "none"))).lower() != "template":
                 meta["parts"][slot]["effects"] = "none"
+            # lore level the part (or set) collection claims: lp2_lore 0 not lore, 1 adjacent, 2 accurate
+            lore = int(col.get("lp2_lore", root.get("lp2_lore", 0)))
+            if lore > 0:
+                meta["parts"][slot]["lore"] = min(lore, 2)
             if rep["chain"]:
                 meta["parts"][slot]["chain"] = rep["chain"]
                 lines.append(f"    chains: {len(rep['chains'])} -> {rep['chain']} (" + "; ".join(",".join(map(str, c)) for c in rep["chains"]) + ")")

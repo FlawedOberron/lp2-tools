@@ -61,8 +61,8 @@ def progress(f, text=""):
 
 
 def slug(s, n=24):
-    s = re.sub(r"[^a-z0-9_]+", "_", s.lower()).strip("_")
-    return (s or "mesh")[:n]
+    s = re.sub(r"[^a-z0-9_]+", "_", s.lower()).strip("_")[:n].strip("_")   # the same again when re-slugged
+    return s or "mesh"
 
 
 # ---------------------------------------------------------------- readers: -> (parts, materials)
@@ -227,8 +227,10 @@ def read_gltf(path):
         name = m.get("name") or f"material{k}"
         names.append(name)
         pbr = m.get("pbrMetallicRoughness", {})
-        mats[name] = dict(bm=image(pbr.get("baseColorTexture")), nm=image(m.get("normalTexture")),
-                          colour=tuple(pbr.get("baseColorFactor", [1, 1, 1, 1])[:3]))
+        sg = m.get("extensions", {}).get("KHR_materials_pbrSpecularGlossiness", {})   # older exports (Sketchfab...)
+        bm = image(pbr.get("baseColorTexture")) or image(sg.get("diffuseTexture"))
+        colour = pbr.get("baseColorFactor") or sg.get("diffuseFactor") or [1, 1, 1, 1]
+        mats[name] = dict(bm=bm, nm=image(m.get("normalTexture")), colour=tuple(colour[:3]))
 
     def node_matrix(n):
         if "matrix" in n:
@@ -323,6 +325,9 @@ def mat_dir(project, name):
 
 
 def load_material(project, name):
+    old = mat_dir(project, name + "_")   # made by an older slug() cut at a "_" (re-slugged names lost it)
+    if not os.path.exists(mat_dir(project, name)) and os.path.exists(os.path.join(old, "material.json")):
+        os.rename(old, mat_dir(project, name))
     p = os.path.join(mat_dir(project, name), "material.json")
     return json.load(open(p)) if os.path.exists(p) else None
 
@@ -483,9 +488,20 @@ def build_material(project, name):
 
 def ensure_material(project, name, src):
     """a file material (read_* dict) -> the project material name (made from it unless one of that name exists)"""
-    if load_material(project, name):
-        return name
+    old = load_material(project, name)
     d = mat_dir(project, name)
+    if old:   # made before: a re-import fills in maps it lacks (the file has them now / an older import missed them)
+        added = False
+        for k in ("bm", "nm"):
+            if src.get(k) and not old.get(k):
+                fn, data = src[k]
+                fn = f"{k}_{slug(os.path.splitext(fn)[0], 40)}{os.path.splitext(fn)[1].lower() or '.png'}"
+                open(os.path.join(d, fn), "wb").write(data)
+                old[k] = fn
+                added = True
+        if added:
+            save_material(project, name, old)
+        return name
     os.makedirs(d, exist_ok=True)
     m = {"colour": [round(float(x), 4) for x in src.get("colour", (0.8, 0.8, 0.8))]}
     for k in ("bm", "nm"):
@@ -662,8 +678,9 @@ def build_import(game, project, name, log=print, d=None, mesh=None):
         parts = split_facing(parts, cfg.get("windows"), float(cfg.get("scale", 100.0)))
         slots = {"@" + f: ensure_blockout(project, f) for f in BLOCKOUT_FACINGS}
     for p in parts:
-        if p["mat"] not in slots:
-            slots[p["mat"]] = ensure_material(project, slug(p["mat"] or name), fmats.get(p["mat"], {}))
+        auto = slug(p["mat"] or name)
+        if p["mat"] not in slots or slots[p["mat"]] == auto:   # its own material: maps it lacks are filled in
+            slots[p["mat"]] = ensure_material(project, auto, fmats.get(p["mat"], {}))
     prev = os.path.join(d, ".preview")
     if os.path.isdir(prev):
         shutil.rmtree(prev)
