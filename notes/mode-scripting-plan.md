@@ -105,3 +105,15 @@ Show text: the queue list on the HUD. No tags required (just 2+ markers named ar
 - Team game flag: lobby rule byte (slots +0x74 >= 1), training screen rule; round banners / spectate use it.
 - Modes in lp2-tools/modes: Survival (team: a team with nobody standing loses the round), Survival FFA (last one wins).
 - Only versus matches load a mode (RoundTime). Clients: holds of their own player come from the host's messages.
+
+## 2026-11-08 score vs points (built, untested in game)
+- RE (DX11 FUN_0100d360, the match-end career points): each player's points come from their own game score
+  (DAT_01852238 +0x103c[slot], kills etc.) x a per-type factor, plus a placement bonus (DAT_0182f5cc[rank + n*16],
+  elimination types) and win / draw extras. The ranking list (flow +0x74) only gives ranks (0xabc team / 0xacc slot; ties
+  equal via FUN_010072e0); its score values are never read. So the game already keeps points and placement apart.
+- With a mode running, rules.cpp ModeRanking orders by: rounds won (no rounds: the round's End winner), the mode's score
+  (Score node: add / set, player or team; match + round totals in scripts.cpp; team = its own + its players'), still
+  standing / out last (RulesEliminate records the order), then the game's points. The list's value is a tier (ties stay
+  ties); g_roundScore gets the round's tier (RoundEnd's winner). Game points are never touched -> top killer still earns.
+- playerinfo "score" = the mode score. Not yet: "kills" / game points in playerinfo (needs 0x103c per build), a mode
+  "award points" node (writing the game score would change career points).
