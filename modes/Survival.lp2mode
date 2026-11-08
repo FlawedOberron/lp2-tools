@@ -1,0 +1,336 @@
+{
+	"format": 1,
+	"name": "Survival",
+	"description": "Each player has Lives deaths a round; a team with nobody left loses the round.",
+	"base": "team",
+	"settings": [
+		{
+			"var": "lives",
+			"label": "Lives (per round)",
+			"kind": "number",
+			"default": 3,
+			"min": 1,
+			"max": 20,
+			"step": 1,
+			"choices": []
+		}
+	],
+	"requires": {
+		"markers": [],
+		"volumes": []
+	},
+	"script": {
+		"nodes": [
+			{
+				"id": "n1",
+				"type": "matchstart",
+				"pos": [
+					0,
+					0
+				]
+			},
+			{
+				"id": "n2",
+				"type": "respawnrules",
+				"pos": [
+					250,
+					0
+				],
+				"respawn": "auto",
+				"a": "5",
+				"b": "lives"
+			},
+			{
+				"id": "n3",
+				"type": "ondeath",
+				"pos": [
+					0,
+					200
+				],
+				"victim": "victim"
+			},
+			{
+				"id": "n4",
+				"type": "playerinfo",
+				"pos": [
+					250,
+					200
+				],
+				"player": "victim",
+				"info": "lives",
+				"var": "left"
+			},
+			{
+				"id": "n5",
+				"type": "compare",
+				"pos": [
+					500,
+					200
+				],
+				"a": "left",
+				"op": "==",
+				"b": "0"
+			},
+			{
+				"id": "n6",
+				"type": "showtext",
+				"pos": [
+					750,
+					150
+				],
+				"text": "{victim} is out",
+				"showto": "all",
+				"player": "victim",
+				"style": "top",
+				"font": "",
+				"colour": "ff8040",
+				"seconds": 3.0
+			},
+			{
+				"id": "n7",
+				"type": "teamlist",
+				"pos": [
+					1000,
+					150
+				],
+				"player": "victim",
+				"alive": true,
+				"list": "standing"
+			},
+			{
+				"id": "n8",
+				"type": "listcount",
+				"pos": [
+					1250,
+					150
+				],
+				"list": "standing",
+				"var": "count"
+			},
+			{
+				"id": "n9",
+				"type": "compare",
+				"pos": [
+					1500,
+					150
+				],
+				"a": "count",
+				"op": "==",
+				"b": "0"
+			},
+			{
+				"id": "n10",
+				"type": "endround",
+				"pos": [
+					1750,
+					150
+				],
+				"scoreof": "against",
+				"player": "victim"
+			}
+		],
+		"links": [
+			[
+				"n1",
+				"then",
+				"n2",
+				"in"
+			],
+			[
+				"n3",
+				"then",
+				"n4",
+				"in"
+			],
+			[
+				"n4",
+				"then",
+				"n5",
+				"in"
+			],
+			[
+				"n5",
+				"yes",
+				"n6",
+				"in"
+			],
+			[
+				"n6",
+				"then",
+				"n7",
+				"in"
+			],
+			[
+				"n7",
+				"then",
+				"n8",
+				"in"
+			],
+			[
+				"n8",
+				"then",
+				"n9",
+				"in"
+			],
+			[
+				"n9",
+				"yes",
+				"n10",
+				"in"
+			]
+		]
+	},
+	"compiled": {
+		"nodes": [
+			{
+				"type": "matchstart",
+				"out": {
+					"then": [
+						[
+							1,
+							"in"
+						]
+					]
+				}
+			},
+			{
+				"type": "respawnrules",
+				"out": {},
+				"respawn": "auto",
+				"a": 5.0,
+				"b": {
+					"var": 0
+				}
+			},
+			{
+				"type": "ondeath",
+				"out": {
+					"then": [
+						[
+							3,
+							"in"
+						]
+					]
+				},
+				"player": 1
+			},
+			{
+				"type": "playerinfo",
+				"out": {
+					"then": [
+						[
+							4,
+							"in"
+						]
+					]
+				},
+				"info": "lives",
+				"var": 2,
+				"player": 1
+			},
+			{
+				"type": "compare",
+				"out": {
+					"yes": [
+						[
+							5,
+							"in"
+						]
+					]
+				},
+				"op": "==",
+				"a": {
+					"var": 2
+				},
+				"b": 0.0
+			},
+			{
+				"type": "showtext",
+				"out": {
+					"then": [
+						[
+							6,
+							"in"
+						]
+					]
+				},
+				"text": "{victim} is out",
+				"showto": "all",
+				"style": "top",
+				"font": "",
+				"colour": "ff8040",
+				"seconds": 3.0,
+				"player": 1
+			},
+			{
+				"type": "teamlist",
+				"out": {
+					"then": [
+						[
+							7,
+							"in"
+						]
+					]
+				},
+				"alive": true,
+				"player": 1,
+				"list": 3
+			},
+			{
+				"type": "listcount",
+				"out": {
+					"then": [
+						[
+							8,
+							"in"
+						]
+					]
+				},
+				"var": 4,
+				"list": 3
+			},
+			{
+				"type": "compare",
+				"out": {
+					"yes": [
+						[
+							9,
+							"in"
+						]
+					]
+				},
+				"op": "==",
+				"a": {
+					"var": 4
+				},
+				"b": 0.0
+			},
+			{
+				"type": "endround",
+				"out": {},
+				"scoreof": "against",
+				"player": 1
+			}
+		],
+		"volumes": 0,
+		"start_off": [],
+		"vars": 5,
+		"var_names": [
+			"lives",
+			"victim",
+			"left",
+			"standing",
+			"count"
+		],
+		"var_kinds": [
+			"number",
+			"player",
+			"number",
+			"list",
+			"number"
+		],
+		"var_init": {
+			"0": 3.0
+		}
+	}
+}

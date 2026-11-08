@@ -90,3 +90,18 @@ Show text: the queue list on the HUD. No tags required (just 2+ markers named ar
 - Our modified Survival (rules.cpp lives / rounds on the stock modes) should become a custom mode later: a .lp2mode
   using a few menu variables (Settings rows), e.g. Lives, built on the lives core. Needs the mod runtime for
   .lp2mode graphs first.
+
+## 2026-11-08 mode runtime v1 (built, untested in game)
+- Survival on the stock rules is off (rules.cpp g_survival = false; the lobby row is ignored, logged once). Its round 2+
+  respawn bug: it counted the game's per-player deaths, which our rounds don't reset. Spectate broke the same way.
+- Runtime: scripts.cpp runs <game>\Modes\<name>.lp2mode "compiled" (lp2mode.py; the editor compiles on save) as a second
+  graph on the host (offline: here), from HudUpdate (ModeFrame). mode.txt in the game folder: the mode's name, then
+  "setting = value" lines. Events: matchstart, roundstart, roundend, worldupdate, ondeath / onspawn (lives.cpp state
+  changes), onkill (never fires yet: killer unknown). Actions: spawnplayer (release at a marker), holdplayer, eliminate
+  (rules.cpp g_elimMask, shown as Out), respawnrules (lives per round / manual), queue, playerinfo (team, deaths, lives),
+  teamlist, endround / endmatch (EndCheck + ranking bonus; rounds' "over"), showtext. score does nothing yet;
+  onjoin / zoneenter not run (left out by the compiler). Holds, eliminations, releases, texts go to players as kMode
+  messages (+ masks every 2 s).
+- Team game flag: lobby rule byte (slots +0x74 >= 1), training screen rule; round banners / spectate use it.
+- Modes in lp2-tools/modes: Survival (team: a team with nobody standing loses the round), Survival FFA (last one wins).
+- Only versus matches load a mode (RoundTime). Clients: holds of their own player come from the host's messages.

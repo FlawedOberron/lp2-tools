@@ -243,20 +243,42 @@ SCRIPT_TYPES = {
     "chance": (("in",), ("yes", "no"), ()),
     "cooldown": (("in", "reset"), ("then", "blocked"), ("seconds",)),
     "zoneoutline": (("show", "hide"), ("then",), ("text", "colour", "seconds")),
+    # game modes (.lp2mode, lp2mode.py; the editor's modes.gd): xlive scripts.cpp runs them on the host
+    "matchstart": ((), ("then",), ()),
+    "roundstart": ((), ("then",), ()),
+    "roundend": ((), ("then",), ()),
+    "worldupdate": ((), ("tick",), ()),
+    "onkill": ((), ("then",), ()),
+    "ondeath": ((), ("then",), ()),
+    "onspawn": ((), ("then",), ()),
+    "spawnplayer": (("in",), ("spawned", "skipped"), ("face", "random")),
+    "holdplayer": (("in",), ("then",), ()),
+    "eliminate": (("in",), ("then",), ()),
+    "respawnrules": (("in",), ("then",), ("respawn",)),
+    "queue": (("push", "push front", "pop", "remove", "clear"), ("then", "empty"), ()),
+    "score": (("add", "set"), ("then",), ("scoreof",)),
+    "playerinfo": (("in",), ("then",), ("info",)),
+    "teamlist": (("in",), ("then",), ("alive",)),
+    "endround": (("in",), (), ("scoreof",)),
+    "endmatch": (("in",), (), ("scoreof",)),
+    "showtext": (("in",), ("then",), ("text", "showto", "style", "font", "colour", "seconds")),
 }
 SCRIPT_VEC_NUMBER_OPS = ("length", "getx", "gety", "getz", "getyaw")   # vector ops whose result is a number
 SCRIPT_VEC_B_VECTOR = ("add", "sub")                                    # ops whose B is a vector (else a number)
 SCRIPT_VOLUME_NODES = ("enter", "volume", "setvalue")
 # the variables a node names, by field: number ("var"), player ("player"; optional on enter), list ("list")
-SCRIPT_VAR_NODES = ("set", "if", "random", "math", "listcount", "playerget", "loop")
+SCRIPT_VAR_NODES = ("set", "if", "random", "math", "listcount", "playerget", "loop", "roundstart", "roundend", "worldupdate",
+                    "playerinfo")
 SCRIPT_PLAYER_NODES = ("enter", "list", "listget", "foreach", "playercheck", "playerget", "playeract", "getmarker",
-                       "spawn", "teleport")
-SCRIPT_LIST_NODES = ("players", "list", "listremove", "listget", "listcount", "foreach", "findmarkers")
+                       "spawn", "teleport", "onspawn", "spawnplayer", "holdplayer", "eliminate", "queue", "score",
+                       "playerinfo", "teamlist", "endround", "endmatch", "showtext")
+SCRIPT_LIST_NODES = ("players", "list", "listremove", "listget", "listcount", "foreach", "findmarkers", "queue", "teamlist")
 SCRIPT_ITEM_NODES = ("list", "listget", "foreach")   # their "player" is a list entry: a marker for a markers list
 SCRIPT_OPERANDS = {"set": ("a",), "random": ("a", "b"), "math": ("a", "b"), "compare": ("a", "b"), "setvalue": ("a",),
                    "listremove": ("a",), "listget": ("a",), "playercheck": ("a",), "playeract": ("a",),
                    "loop": ("a", "b"), "spawn": ("a",), "vector": ("a", "b"),
-                   "switch": ("a",), "chance": ("a",), "zoneoutline": ("a",)}
+                   "switch": ("a",), "chance": ("a",), "zoneoutline": ("a",),
+                   "respawnrules": ("a", "b"), "score": ("a",)}
 
 
 def script_volume_ids(p):
@@ -354,6 +376,13 @@ def script_manifest(p, log=print):
             v = ref(n, "player", "marker" if marker else "player", "" if n["type"] == "enter" else "player")
             if v is not None:
                 e["player"] = v
+        if n["type"] == "onkill":   # mode events' players
+            e["player"] = ref(n, "killer", "player", "killer")
+            e["victim"] = ref(n, "victim", "player", "victim")
+        if n["type"] == "ondeath":
+            e["player"] = ref(n, "victim", "player", "victim")
+        if n["type"] == "spawnplayer":
+            e["marker"] = ref(n, "marker", "marker", "spot")
         if n["type"] == "teleport":   # its "player" is who; where: "marker", or a vector ("vec")
             if n.get("to") == "vector":
                 e["vec"] = ref(n, "vec", "vector", "pos")
