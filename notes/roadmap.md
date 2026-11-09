@@ -27,11 +27,19 @@ later-2026-11-03.md ROADMAP items, mode-scripting-plan.md, bot-match-plan.md).
 9. **Vehicle locational damage** (experiment, if there's time): hits to wheels / legs / engine / turret parts
    doing different things. Lead: uVitalSuit mWeakHitParts / mWeakHitRemainTimer / VsWeakDamageTurnAngle (the game
    already has weak-spot parts), mIsMovePartsBreak / mIsJumpPartsBreak / mIsDurabilityPartsBreak.
+10. **Frozen Wasteland (jeeps)**: LP2's stock Frozen Wasteland (online map 15), unchanged stage, with a bunch of
+   jeep spawns in every layout. NOT the LP1 s850 port (user, 2026-11-09). Needs: (a) the jeep in game (item 3)
+   and a jeep spawn record / marker kind; (b) a stock-map variant package: map 15's files copied into a package
+   (base 15; packages are bound to slots 13/14 and renumbered, so the stock files have to travel in it) with its
+   layouts (start / object sets) patched to add the jeep spawns (lp2layout.patch_objset). The editor has no
+   "keep the stock stage, edit layouts only" project yet: add that (useful for other stock-map variants too).
+11. **Post-game game settings menu**: change the game settings after a match, for the next one (user, 2026-11-09;
+   exact scope to confirm). Related: game-settings-plan.md (our own rule storage, presets per game type),
+   requests-mp-menu.md.
 
 ## Carried over (open, from the last sessions)
 - Black screen + hang at the title screen after the PC resumed (2026-11-09 12:28): all threads waiting on a lock,
   log stopped at the title; overlay hooked normally. If it repeats: test with ModCache\no-ui.txt.
 - ModCache\deathprobe.on still on (5.7 MB file per death): ask before removing.
 - Local commits not pushed / released (xlive, lp2-tools, lp2-editor): see memory lp2-night-2026-11-08.
-- Frozen wasteland map with jeeps: asked "map first or jeep first, new map or a snowy version of an existing one".
 - Screenshot fix (game's own swap chain hook) confirmed working 2026-11-08 20:16.
