@@ -22,6 +22,13 @@ run-over behaviour (no stock VS moves fast enough for that to matter). May come 
 - Test: xlive `tests/jeep/jeep_test.cpp` (native g++, command in its header): settle, top speed, braking, look
   turn without rolling, handbrake, ramp jump landing, wall, flip recovery, run-over thresholds. All pass.
 
+## In-game test (2026-11-09, e2fb720, untested)
+xlive `src/mods/jeep_drive.cpp`: with ModCache\jeep.txt, on an online map with `Mods\jeep\online<NN>.col`
+(lp2jeepcol.py from move.sbc1; map 15 installed in both copies), any VS the local player rides is driven by the jeep
+model: grid raycasts on our copy of the collision, pose written to the VS (+0x30 and copies; +0x40 quaternion if it
+looks like one, else SetAngle yaw), run-overs via ForceThrow (force.cpp) + CharacterDamage. Log lines "mods: jeep:".
+No seats / model / sync yet.
+
 ## Game side (next)
 1. Seat RE (DX11): uVitalSuit +0x2360 mSeatInfo (cSeatInfo: mSeatNum +0x8?, mSeatStatus +0x4?; order in the
    property list is ambiguous), +0x23c0 mRideCheckRange[8] (VSs allow up to 8 seats). cThink mpPilot / mpCopilot /
