@@ -29,7 +29,9 @@ FMT_SHADOW = 0x0CB6800E  # 20 bytes: pos i16x3, 0, idx u8x4, weights u8x4, norma
 # 24 bytes, two bones: pos i16x3, w0 i16, normal u8x4, tangent u8x4, uv f16x2, bone idx f16 x2
 # (w1 = 1 - w0). The 29xx backpack's materials only exist in these (two hashes, same layout).
 FMT_SKIN2 = (0xC31F2014, 0x6A2E1016)
-STRIDE = {FMT_SKIN: 28, FMT_SHADOW: 20, FMT_SKIN2[0]: 24, FMT_SKIN2[1]: 24}
+# 20 bytes, rigid (VS models): pos i16x3, bone index i16, normal u8x4 (w 127), tangent u8x4, uv f16x2
+FMT_RIGID = 0x01CB8011
+STRIDE = {FMT_SKIN: 28, FMT_SHADOW: 20, FMT_SKIN2[0]: 24, FMT_SKIN2[1]: 24, FMT_RIGID: 20}
 LOD_ALL = 0xFF
 MAX_RUN_VERTS = 0xFFFF
 MIN_WEIGHT = 0.002       # smaller influences are dropped (quantisation noise, stray paint)
@@ -176,6 +178,13 @@ def encode_skin2_vertex(q, n, t, uv, ws):
                        uv[0], 1.0 - uv[1], float(ws[0][0]), float(ws[1][0]))
 
 
+def encode_rigid_vertex(q, n, t, uv, ws):
+    return struct.pack("<3hh4B4B2e", q[0], q[1], q[2], ws[0][0],
+                       _u8n(n[0]), _u8n(n[1]), _u8n(n[2]), 0x7F,
+                       _u8n(t[0]), _u8n(t[1]), _u8n(t[2]), 0xFF,
+                       uv[0], 1.0 - uv[1])
+
+
 def encode_shadow_vertex(q, n, ws):
     raw = [int(round(w * 255)) for _, w in ws]
     raw[0] += 255 - sum(raw)
@@ -248,6 +257,8 @@ def build_model(tpl, custom_bones, meshes, shadow=True):
         fmt = tpl.get("mat_fmt", {}).get(m["mat"], FMT_SKIN)
         if fmt in FMT_SKIN2:
             verts = [(v, _top2(ws)) for v, ws in verts]
+        elif fmt == FMT_RIGID:
+            verts = [(v, [(ws[0][0], 1.0), (0, 0.0), (0, 0.0), (0, 0.0)]) for v, ws in verts]  # one bone each
         else:
             fmt = FMT_SKIN  # 14d40019, or bde5301a (same layout) where a material uses both
         work.append(dict(fmt=fmt, group=m["group"], mat=m["mat"], lod=m.get("lodmask", LOD_ALL),
@@ -283,6 +294,8 @@ def build_model(tpl, custom_bones, meshes, shadow=True):
                 vb += encode_skin_vertex(q, v["normal"], v["tangent"], v["uv"], ws)
             elif m["fmt"] in FMT_SKIN2:
                 vb += encode_skin2_vertex(q, v["normal"], v["tangent"], v["uv"], ws)
+            elif m["fmt"] == FMT_RIGID:
+                vb += encode_rigid_vertex(q, v["normal"], v["tangent"], v["uv"], ws)
             else:
                 vb += encode_shadow_vertex(q, v["normal"], ws)
         r[1] += n
