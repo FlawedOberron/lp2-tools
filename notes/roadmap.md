@@ -45,6 +45,7 @@ later-2026-11-03.md ROADMAP items, mode-scripting-plan.md, bot-match-plan.md).
 ## Carried over (open, from the last sessions)
 - Black screen + hang at the title screen after the PC resumed (2026-11-09 12:28): all threads waiting on a lock,
   log stopped at the title; overlay hooked normally. If it repeats: test with ModCache\no-ui.txt.
-- ModCache\deathprobe.on still on (5.7 MB file per death): ask before removing.
+- 2026-11-09 cleanup: test files removed from both copies (mode.txt Survival FFA, deathprobe.on + 325 MB dumps,
+  bot-log.txt, scorelog.on, team-hud.txt, jeep files). Kept: fonts.txt, rules.txt, README.txt, steam_appid.txt.
 - Local commits not pushed / released (xlive, lp2-tools, lp2-editor): see memory lp2-night-2026-11-08.
 - Screenshot fix (game's own swap chain hook) confirmed working 2026-11-08 20:16.
