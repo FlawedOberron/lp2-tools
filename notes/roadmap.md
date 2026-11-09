@@ -13,7 +13,10 @@ later-2026-11-03.md ROADMAP items, mode-scripting-plan.md, bot-match-plan.md).
    State: Hit Stagger now scales all three hit pools + logs which runs out (ee9cab7, untested): check the log
    line first. Notes: game-settings-plan.md "Hit Stagger: split + increase".
 3. **Jeep** (bit of fun): driver / gunner / passenger, original design in the Warthog spirit, run-overs. Driving
-   core + test done (69cc0b2); game side next, seat table log first. Notes: jeep-plan.md.
+   core + test done (69cc0b2). PARKED 2026-11-09: in-game hack attempts failed (walks like a VS); user's 7-step
+   plan + findings in jeep-plan.md; user is learning hard-surface modelling and will design a generic vehicle.
+   Test files removed from both game copies (map zip, Mods\jeep, ModCache\jeep.txt); the DLL code is inert without
+   jeep.txt.
 4. **Custom weapon + vehicle logic, custom animations** (start). Notes: weapon-workbench.md (WpXXParam stats in
    exe data), map-editor-plan.md (LP1 VS logic, VS weapons e.g. Welding Beam), vs-ids.md, vs-mounts.md. Mode
    packages (GameModes zips, content.weapons / vehicles) are the intended carrier.
