@@ -57,3 +57,5 @@ later-2026-11-03.md ROADMAP items, mode-scripting-plan.md, bot-match-plan.md).
 - Damage modifiers per attack type (bullet, explosion, anchor, melee, fall, VS weapons...), taken and dealt, plus a headshot modifier. Rows in Match Settings (setup + lobby). The hit kind detection from Hit Stagger (StaggerKindOf, rules.cpp) can be reused; damage entry DX11 0x9b71b0 (map-editor-plan.md), uCharacterBase::vf151 hit handler 0x9d4210.
 - Random map choices including custom maps (game-settings-plan.md, lobby phase 2 TODO).
 - Bot AI: F.E.A.R.-style GOAP planner for Team Elimination (cover points from collision, LOS, squad roles), after the lobby menu.
+- Voice chat settings (user, 2026-11-09): an options page for voice (on/off, push-to-talk vs open mic + key, input/output device, volumes, mute per player). Find how the xlive voice path works today (XHV / Steam voice in xlive-steamworks) before designing.
+- Bots on stock maps (2026-11-09): navmesh now loaded per stock area (stockarea.cpp); zones grouped into regions for roaming (bots.cpp RegionsBuild). Map 12 nav still poor.
