@@ -460,3 +460,11 @@ marks its area checked ("checked the noise: nobody, moving on" in bot-log). Fres
   then "grapple climbed / didn't climb" after 1.5 s. Unknown: whether the anchor follows the cursor (else find uHuman's
   anchor aim source; cAITerrainAnchorAnalyzer exists but uses stock terrain data).
 - Guardian nav (user's map): 33 zones, 13 groups without grapple; ~half of its 44 jump links are seams.
+
+## Stock map zones (2026-11-09)
+- Online areas (aArea_ONLINE_*) have no navmesh; only aArea_TUTOREAL_* do. Bot matches run in online areas (System Link
+  or online), so stock maps had only start-point areas: bots shot but stood still (user test, Pirate Fortress).
+- lp2stocknav.py: import-lp2 + lp2navmap per stock map -> xlive src/mods/stocknav_data.h (raw deflate, ~1.3 MB for 14
+  maps); stocknav.cpp inflates (puff); gravity.cpp AreaFlags gives a stock map (episode 7, not slot 13/14) its zones.
+- Map 12 (block arena) only got 90 polygons: its blocks are _v pieces (ataricubescr0) the import doesn't add. Map
+  packages without nav_zones (Area 921, Battlegrounds, AZ-Tech, Crossfire City, MoverLab) still need a rebuild with zones.
