@@ -207,3 +207,13 @@ addresses via sigport.py for DX9 / 1.1.
 - Rows: our rules only (Rounds, Player, Stagger, Weapons, Anchor, Radar, Bots): extras + the g_menu rows. They reach clients via the usual member-data rules. On close: current.json re-saved (file's stock bytes, our rows over them); the next create screen takes the g_menu rows (g_lobbyCarry in PushRules).
 - Not yet: the game's own rules (time, score, mode, map). Game Options (uIdBattlePlayerMatch) is only the map list (+0x3b8..0x3c8, FUN_01004490 / FUN_01004510 session update). Phase 2 RE: where a client gets the host's 0x38 rule bytes, and whether they can change after the join.
 - Log: "lobby settings: opened / closed / <row> <value> / buttons %08x pressed".
+
+## Lobby Match Settings, phase 2: the game's own rules + map (built 2026-11-09, untested)
+- Lobby rule block = match setup (0x1852850 DX11) +0x5e, 0x38 bytes, the create screen's layout (rule +0x74, map +0x79). Every machine has one.
+- Panel edits a copy; on close: g_menu rows written in, derived bytes via the game's push (FUN_00e8c270, = kRulesVas.pushRules, ret 4; called through g_pushRulesOriginal), copied into the block, current.json, carried to the next Create Match (whole block, PushRules).
+- Sync is ours: host publishes the block hex as member data "srules" (LobbyPanelTick, on change); clients write it into their block from the lobby tick. Stock path exists too (MsgOnline 322-326 "rules changed by the host") but wasn't needed.
+- Rows: score rows + kSections rows the mode's row table has (StockRow), labels MsgOnline 38+item (RuleItem), values by item (StockRangeOf; remaps: FF {1,2,0}, grenade {6,0..5}, Battle Series value-2). Not here: mode, max players, private, halftime.
+- Map row: stock maps the host has (MapAvailable, VS flag) + own packages as slot 13 (MapsLobbyChoices); package picked only on close (PackagesPickIndex), so scrolling doesn't trigger downloads.
+- Open: F1 only. Pad Y (button bit 4) is the lobby's gamer card (FUN_00e969f0 uVar3 & 4); a pad button still to pick.
+- Untested: whether the lobby's info panel refreshes, whether the game resends its own block at match start (either way the same bytes), session browser still shows the create-time properties.
+- TODO (user 2026-11-09): Random map choices (16-19, Random Small/Medium/Large/All) only pick stock maps. Decide how custom maps join random: the host would pick the map itself (from stock + own packages, by size) before the start, bind it to slot 13 and publish so clients download, and the start waits (content hold). Needs the random pick's writer (map byte rewritten at match start, see history 2026-10-16) replaced or pre-empted.
