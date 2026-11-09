@@ -13,6 +13,13 @@ Embedded form (little endian, raw deflate; the DLL inflates it with puff):
   u32 links; per link: u16 from, u16 to, u8 kind (0 walk 1 jump 2 drop 3 grapple 4 launch), f32 length, f32 a[3], f32 b[3]
 Zone names are z<index> (stock maps have no zone volumes, so no names or tags of their own).
 The data is derived from the player's own install (collision outlines), no game files are copied into the DLL.
+
+  --area OUT.bin: the navmesh the game's own bot AI walks on (cAIPlanMoveHmAction needs it loaded by the area), per map:
+  the generated rAINavigationMeshList, rAIWayPoint and an empty rIntelligenceBox, and the area's rScrList with entries
+  29/30/31 naming them, as COPY / ADD ops against the player's own (lp2brain.delta). The DLL .incbin's it
+  (src/mods/stockarea.bin) and adds them to aArea_ONLINE_NN.arc when the game opens it. Little endian:
+    'SAR1' u32 maps; per map: u32 map, u32 entries; per entry: u16 n name, u16 n class, u8 kind (0 new, deflated;
+    1 ops against the stock entry of that name), u32 size, u32 crc32 (of the result), u32 n, n bytes
 """
 import argparse, glob, json, os, struct, subprocess, sys, tempfile, zlib
 
@@ -55,11 +62,41 @@ def build(nn, game, library, work):
     return json.load(open(os.path.join(prev, "navzones.json")))
 
 
+def area(nn, game, work):
+    import lp2mapc, lp2nav, lp2brain, numpy as np
+    folder = os.path.join(work, "map" + nn)
+    tag = ("lp2o" + nn).ljust(8, "_")
+    names = {29: f"tool\\AI\\NaviMesh\\{tag}\\List_{tag}", 30: f"tool\\AI\\NaviMesh\\{tag}\\Way_{tag}", 31: f"tool\\AI\\AreaAI\\{tag}"}
+    nav = os.path.join(folder, "assets", "nav")
+    with open(os.path.join(folder, ".preview", "navmesh.bin"), "rb") as f:
+        n = struct.unpack("<I", f.read(4))[0]
+        tri = np.frombuffer(f.read(n * 36), "<f4").reshape(-1, 3)
+    box = lp2nav.empty_intelligence_box((float(tri[:, 0].min()), float(tri[:, 2].min())), (float(tri[:, 0].max()), float(tri[:, 2].max())))
+    out = []
+    def new(name, cls, raw):
+        c = zlib.compressobj(9, zlib.DEFLATED, -15)
+        out.append((name, cls, 0, raw, c.compress(raw) + c.flush()))
+    new(names[29], "rAINavigationMeshList", open(os.path.join(nav, f"List_{tag}.rAINavigationMeshList"), "rb").read())
+    new(names[30], "rAIWayPoint", open(os.path.join(nav, f"Way_{tag}.rAIWayPoint"), "rb").read())
+    new(names[31], "rIntelligenceBox", box)
+    arc = os.path.join(game, "nativePC", "arcXmlTmpPC", f"aArea_ONLINE_{nn}.arc")
+    for nm, b in lp2mapc.entries(arc).get("rScrList", []):
+        patched = lp2nav.scrlist_add(b, sorted(names.items()))
+        out.append((nm, "rScrList", 1, patched, lp2brain.delta(b, patched)))
+    rec = [struct.pack("<II", int(nn), len(out))]
+    for name, cls, kind, raw, data in out:
+        rec.append(struct.pack("<H", len(name)) + name.encode("latin-1") + struct.pack("<H", len(cls)) + cls.encode()
+                   + struct.pack("<BIII", kind, len(raw), zlib.crc32(raw), len(data)) + data)
+    return b"".join(rec)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--game", required=True)
     ap.add_argument("--library", required=True)
     ap.add_argument("--work", help="work folder (default: a temporary one)")
+    ap.add_argument("--area", help="also write the navmesh blob (src/mods/stockarea.bin)")
+    ap.add_argument("--reuse", action="store_true", help="use the work folder's maps as they are (no rebuild)")
     ap.add_argument("out")
     ap.add_argument("maps", nargs="*")
     a = ap.parse_args()
@@ -70,7 +107,8 @@ def main():
     os.makedirs(work, exist_ok=True)
     rows, total = [], 0
     for nn in maps:
-        raw = pack(build(nn, a.game, a.library, work))
+        nzp = os.path.join(work, "map" + nn, ".preview", "navzones.json")
+        raw = pack(json.load(open(nzp)) if a.reuse and os.path.exists(nzp) else build(nn, a.game, a.library, work))
         c = zlib.compressobj(9, zlib.DEFLATED, -15)
         z = c.compress(raw) + c.flush()
         total += len(z)
@@ -90,6 +128,10 @@ def main():
             f.write(f"\t{{{n}, {size}u, kStockNav{n:02d}, {len(z)}u}},\n")
         f.write("};\n")
     print(f"{len(rows)} map(s), {total} bytes deflated -> {a.out}")
+    if a.area:
+        blobs = [area(nn, a.game, work) for nn in maps]
+        open(a.area, "wb").write(b"SAR1" + struct.pack("<I", len(blobs)) + b"".join(blobs))
+        print(f"navmesh blob: {len(blobs)} map(s), {os.path.getsize(a.area)} bytes -> {a.area}")
     if tmp:
         tmp.cleanup()
 
