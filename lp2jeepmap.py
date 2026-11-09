@@ -22,6 +22,7 @@ import zipfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import lp2jeepcol  # noqa: E402
+import lp2pack  # noqa: E402
 import lp2layout  # noqa: E402
 import objset  # noqa: E402
 
@@ -60,13 +61,8 @@ def main():
     nn = "%02d" % a.base
     out = a.out or os.path.join(a.game, "Maps", "FrozenWastelandJeeps.zip")
     nat = os.path.join(a.game, "nativePC")
-    files = []
-    for pat in (f"arcXmlTmpPC/aArea_ONLINE_{nn}.arc", f"arcXmlTmpPC/variable/aArea_ONLINE_{nn}_v.arc",
-                f"arcLp2Xml/autoArc/aArea_ONLINE_{nn}.arc", f"arcLp2Xml/autoArc/aArea_ONLINE_{nn}_scr.arc",
-                f"sound/bgm/aArea_ONLINE_{nn}/**/*", f"sa/*/Lost2/Game/Episode_ONLINE/Area_ONLINE_{nn}/**/*"):
-        files += [f for f in glob.glob(os.path.join(nat, pat), recursive=True) if os.path.isfile(f)]
     v_arc = os.path.join(nat, "arcXmlTmpPC", "variable", f"aArea_ONLINE_{nn}_v.arc")
-    if v_arc not in files:
+    if not os.path.exists(v_arc):
         sys.exit(f"no {v_arc}")
     with tempfile.TemporaryDirectory() as tmp:
         ex = os.path.join(tmp, "v")
@@ -87,17 +83,29 @@ def main():
             sys.exit(f"no {sbc}: run lp2stockmaps.py for map {nn} first")
         ntri = lp2jeepcol.convert(sbc, col)
         os.makedirs(os.path.dirname(out), exist_ok=True)
+        # the stock map as lp2pack.py packs one (its archives, stage packages, music and the per-map resources from
+        # the boot archives: detail .tde, .msl, .swc), then our object sets, ground and preload on top
+        stock = os.path.join(tmp, "stock.zip")
+        lp2pack.build_map(argparse.Namespace(game=a.game, src=a.base, name=a.name, size=a.size, out=stock))
+        v_rel = f"nativePC/arcXmlTmpPC/variable/aArea_ONLINE_{nn}_v.arc"
         tmp_zip = out + ".tmp"
-        with zipfile.ZipFile(tmp_zip, "w", zipfile.ZIP_DEFLATED) as z:
-            z.writestr("map.json", json.dumps({"name": a.name, "base": a.base, "number": a.base, "size": a.size,
-                                               "preload": ["uVs16"]}, indent=1))
-            for f in files:
-                rel = "nativePC/" + os.path.relpath(f, nat).replace(os.sep, "/")
-                z.write(new_v if f == v_arc else f, rel)
+        with zipfile.ZipFile(stock) as src, zipfile.ZipFile(tmp_zip, "w", zipfile.ZIP_DEFLATED) as z:
+            names = src.namelist()
+            if v_rel not in names:
+                sys.exit(f"lp2pack's package has no {v_rel}")
+            for n in names:
+                if n == "map.json":
+                    z.writestr(n, json.dumps({"name": a.name, "base": a.base, "number": a.base, "size": a.size,
+                                              "preload": ["uVs16"]}, indent=1))
+                elif n == v_rel:
+                    z.write(new_v, n)
+                else:
+                    z.writestr(src.getinfo(n), src.read(n))
             z.write(col, f"nativePC/jeep/aArea_ONLINE_{nn}.col")
+            count = len(names) + 1
         os.replace(tmp_zip, out)
     print(f"{total} jeep spawns over the layouts (other VS-group types kept: {' '.join(sorted(kept)) or 'none'}), "
-          f"ground {ntri} triangles, {len(files) + 2} files -> {out}")
+          f"ground {ntri} triangles, {count} files -> {out}")
 
 
 if __name__ == "__main__":

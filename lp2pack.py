@@ -40,7 +40,11 @@ def build_map(a):
             work = tempfile.mkdtemp(prefix="lp2pack")
             mapslot.extract(os.path.join(native, arc), work)
             res = name.format(a.src)
-            z.write(mapslot.path_of(work, res, cls), "nativePC/" + res.replace("\\", "/") + "." + ext)
+            p = mapslot.path_of(work, res, cls)
+            if not os.path.exists(p):   # not every map has every one (map 15: no MaterialSkipList)
+                print("not in the boot archives (skipped):", res)
+                continue
+            z.write(p, "nativePC/" + res.replace("\\", "/") + "." + ext)
     with zipfile.ZipFile(a.out) as z:
         print(f"wrote {a.out}: {len(z.namelist())} files, {os.path.getsize(a.out) >> 20} MB")
 
