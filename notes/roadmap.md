@@ -33,6 +33,8 @@ later-2026-11-03.md ROADMAP items, mode-scripting-plan.md, bot-match-plan.md).
    (base 15; packages are bound to slots 13/14 and renumbered, so the stock files have to travel in it) with its
    layouts (start / object sets) patched to add the jeep spawns (lp2layout.patch_objset). The editor has no
    "keep the stock stage, edit layouts only" project yet: add that (useful for other stock-map variants too).
+   2026-11-09: first cut built by script, untested: lp2jeepmap.py -> Maps\FrozenWastelandJeeps.zip (every layout's
+   VS spawns -> type 0x16, which lp2jeepmodel.py's uVs16.arc override dresses as the jeep; ground inside).
 11. **Post-game game settings menu**: change the game settings after a match, for the next one (user, 2026-11-09;
    exact scope to confirm). Related: game-settings-plan.md (our own rule storage, presets per game type),
    requests-mp-menu.md.
