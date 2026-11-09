@@ -10,8 +10,11 @@ later-2026-11-03.md ROADMAP items, mode-scripting-plan.md, bot-match-plan.md).
    untested in game.
 2. **Stagger settings: fix + split.** Fall, melee, hit (bullet), grapple (anchor) and explosion, each with
    reduce AND increase options (anchor hit sending players flying). Later: melee ragdolling people off the map.
-   State: Hit Stagger now scales all three hit pools + logs which runs out (ee9cab7, untested): check the log
-   line first. Notes: game-settings-plan.md "Hit Stagger: split + increase".
+   State 2026-11-09: split built (xlive "Stagger split" commit, untested in game): Bullet Stagger (the old Hit
+   Stagger row, rule byte 0x36) + Explosion / Anchor / Melee Stagger rows (extras), values Default / Reduced / Low /
+   Off / Increased 1.5x / High 2x / Extreme 3x. Kind from the caller's return address (melee, anchor) or the third
+   pool (explosion), all 4 builds. Not yet: anchor hits launching players, melee ragdoll off the map.
+   Notes: game-settings-plan.md "Hit Stagger: split + increase".
 3. **Jeep** (bit of fun): driver / gunner / passenger, original design in the Warthog spirit, run-overs. Driving
    core + test done (69cc0b2). PARKED 2026-11-09: in-game hack attempts failed (walks like a VS); user's 7-step
    plan + findings in jeep-plan.md; user is learning hard-surface modelling and will design a generic vehicle.
@@ -38,8 +41,8 @@ later-2026-11-03.md ROADMAP items, mode-scripting-plan.md, bot-match-plan.md).
    "keep the stock stage, edit layouts only" project yet: add that (useful for other stock-map variants too).
    2026-11-09: first cut built by script, untested: lp2jeepmap.py -> Maps\FrozenWastelandJeeps.zip (every layout's
    VS spawns -> type 0x16, which lp2jeepmodel.py's uVs16.arc override dresses as the jeep; ground inside).
-11. **Post-game game settings menu**: change the game settings after a match, for the next one (user, 2026-11-09;
-   exact scope to confirm). Related: game-settings-plan.md (our own rule storage, presets per game type),
+11. **NEXT after stagger (user, 2026-11-09): "change game settings" from the lobby**, so the host doesn't back
+   out and recreate the match each round (was "post-game game settings menu"). Related: game-settings-plan.md (our own rule storage, presets per game type),
    requests-mp-menu.md.
 
 ## Carried over (open, from the last sessions)
