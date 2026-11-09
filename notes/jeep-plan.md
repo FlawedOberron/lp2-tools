@@ -22,37 +22,47 @@ run-over behaviour (no stock VS moves fast enough for that to matter). May come 
 - Test: xlive `tests/jeep/jeep_test.cpp` (native g++, command in its header): settle, top speed, braking, look
   turn without rolling, handbrake, ramp jump landing, wall, flip recovery, run-over thresholds. All pass.
 
-## In-game test (2026-11-09, e2fb720, untested)
-xlive `src/mods/jeep_drive.cpp`: with ModCache\jeep.txt, on an online map with `Mods\jeep\online<NN>.col`
-(lp2jeepcol.py from move.sbc1; map 15 installed in both copies), any VS the local player rides is driven by the jeep
-model: grid raycasts on our copy of the collision, pose written to the VS (+0x30 and copies; +0x40 quaternion if it
-looks like one, else SetAngle yaw), run-overs via ForceThrow (force.cpp) + CharacterDamage. Log lines "mods: jeep:".
-No seats / model / sync yet.
+## What the 2026-11-09 attempts showed (keep)
+Approach tried: every VS on a map package (lp2jeepmap.py: Frozen Wasteland (Jeeps), all layouts' VS -> type 0x16)
+dressed as a rigid jeep model on vs16's skeleton (lp2jeepmodel.py, uVs16.arc override in Mods\jeep) and its pose
+overwritten each update by the jeep core (jeep_drive.cpp, from oneway.cpp's unit update wrapper). Result: they walk
+like VS. Findings:
+- RulesLocalSlot() stays -1 mid-match: g_localIndex is only set in ControlUpdate, which runs while a player is
+  dead. Nothing that needs "the local player" works until that's fixed (fallback: the entry with a camera).
+- VS / character updates run on several worker threads at once (log thread ids): shared state needs a lock.
+- Never measured: whether the game moves a VS again after our write (the probe needed the local slot).
+- vs16 is the vs06 family (bike <-> robot): its own state machine and motions keep running under any pose write.
+- Riding: Body(slot) is the soldier while riding. Leads: cThink mpPilot +0xb4, mpCopilot, mpRide +0xbc (DX11
+  0x905eb0 registration), uControl mRidedVsGITK / mRideOffReason, uCharacterBase +0x1790 mpRideReservedVs.
+Kept, working: the driving core + native tests, the map package (loads, 17 VS spawn), the model writer's rigid
+format, ForceThrow / CharacterPlace, the jeep ground (.col) per map package.
 
-## Game side (next)
-1. Seat RE (DX11): uVitalSuit +0x2360 mSeatInfo (cSeatInfo: mSeatNum +0x8?, mSeatStatus +0x4?; order in the
-   property list is ambiguous), +0x23c0 mRideCheckRange[8] (VSs allow up to 8 seats). cThink mpPilot / mpCopilot /
-   mpRide. First in-game step: log every VS type's seat table when one spawns, find a ground VS with >= 2 seats to
-   host the jeep (its ride / get-out / seat logic and network sync come with it).
-2. Host VS: the jeep is that VS class with our model (as the LP1 VS ports: vs66 on vs06's class). Each frame (VS
-   update hook) for a jeep VS: skip the class's own movement, feed the jeep State the driver's pad (+0x1c8 bits,
-   stick) and camera yaw, Step(), write position + rotation back (and wheel / turret joints for the model).
-3. Ground for the raycasts: either the game's collision ray (cVirtualCursor's: FUN_00fc02a0, result +0x390 pos,
-   +0x3d5 static hit; find the plain ray-vs-static call) or our own copy of a custom map's collision mesh from its
-   package (a BVH in the DLL: works on every custom map, independent of the game's query). Try the game's first.
-4. Seats: driver (throttle / brake = move stick, steer = camera (look steering), handbrake = jump, horn), gunner
-   (turret weapon = the host VS's weapon on the turret joint, aimed by the gunner's camera within its arc),
-   passenger (keeps their own weapon, aims within the cone). Switch seats with action; flip it with action nearby.
-5. Run-over: each frame, units within 6 m (player infos game+0x28[p] -> +0x480 -> +0x40, bots the same) go through
-   RunOver; per-unit 0.5 s cool-down. Push = set the unit's velocity; Knock = the game's blown reaction (the Hit
-   Stagger work: blown pool, uCharacterBase::vf151) + damage; Kill = lethal damage + a ragdoll throw. Credit the
-   driver; friendly fire by the match rules; the jeep's own riders never.
-6. Spawning: map editor "Vehicle spawn" marker (kind jeep, respawn time), and mode packages list vehicles in
-   mode.json content.vehicles. Respawn when destroyed / abandoned far away.
-7. Model: an original jeep in Blender -> lp2model (wheels, suspension arms, steering knuckles, turret yaw / pitch
-   joints, seat joints). Damage states later.
-8. Online: host-authoritative pose first (the host VS's own sync if it carries position + rotation), test offline
-   first. Bots driving: later (route over zones, the gunner seat is easy: aim at targets).
+## Plan (user, 2026-11-09): one step at a time, each proven in game before the next
+1. **The jeep asset**: 3 seats (driver, gunner, passenger) and a proper skeleton: root, chassis, per wheel a
+   suspension arm + wheel (front: steering knuckle), turret yaw + pitch, seat joints, exit points. Model rigid per
+   joint (lp2model FMT_RIGID). Open: which VS class hosts it (needs >= 3 riders: mRideCheckRange[8], cSeatInfo;
+   survey stock VS seat tables; vscb transport 0x28/0xa8 carries riders), joint ids its code expects.
+   In-game check: it spawns, renders, can be entered.
+2. **Physics drives the skeleton**: the core owns the root pose and the joints (suspension compression, wheel spin,
+   steering). The host VS's own movement / motion update skipped for jeeps (RE: the uVitalSuit move + motion
+   update; skip it, keep ride logic). Riders sit and do nothing yet; it lands and slides along the floor.
+   In-game check: drop one, it settles on its wheels; push it (grenade), it slides. Prereq: a "can we move a
+   VS at all" test (nudge a ridden stock VS 1 m once: stays or snaps back).
+3. **Generic wheeled-vehicle controller**: jeep.h Params -> a vehicle config (N wheels with position, radius,
+   suspension, driven / steered / braked flags, engine force curve, top speed, steering lock vs speed, grip, mass,
+   centre of mass), loadable from the mode / map package (content.vehicles). Steering left / right and engine
+   force to the wheels as inputs. Native only (tests/jeep): can be done without the game.
+4. **Driver controls**: while someone is in the driver seat, their pad goes to the controller (steer, throttle,
+   brake, handbrake). Needs: the local slot fix, the ride pointer (who sits where), the pad's analog stick
+   fields (only the button bits +0x3b8 / +0x3c0 are known). Remote drivers: input or pose sync over the network.
+5. **Turret seat**: like stock turrets (vs03 / om0014 column, 150-152 built-in joints) but parented to the jeep's
+   turret joints instead of a fixed spot; weapon picked from any VS weapon id (vs-mounts.md: mounts 100-103,
+   weapon ids 0x41..0x6d; weapon-workbench.md).
+6. **Passenger seat**: sits, keeps aiming and firing their own weapon (within a cone). RE: how stock riders that
+   can shoot work (VS copilot / outside riders).
+7. **Animations per seat** (sit, gunner stance, getting in / out): rMotionList work (lp2_blender_anim.py).
+
+Suggested start: 3 (no game needed) alongside the RE spikes for 1 (host class + seats) and 2 (move test).
 
 ## Tuning knobs (jeep.h Params)
 topSpeed, driveForce, grip / highSpeedGrip, rearSlideGrip, maxSteer / highSpeedSteer, springRate / damping /
