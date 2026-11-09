@@ -201,3 +201,9 @@ addresses via sigport.py for DX9 / 1.1.
   (e.g. an anchor hit sends players flying = force the blown pool / a launch, not just a stumble). Needs: the hit's
   attack type from the hit param (iVar29 in vf151, cHitParam) to pick the scale; "increase" = scale > 1 on the
   pools, and for "flying" a forced blown reaction.
+
+## Lobby Match Settings, phase 1 (built 2026-11-09, untested)
+- rules.cpp LobbyPanel*: overlay panel in the player-match lobby, host only. F1 or the Save Profile button (bit 4) opens it; while open, LobbyInput / LobbyPrompt run with the input zeroed.
+- Rows: our rules only (Rounds, Player, Stagger, Weapons, Anchor, Radar, Bots): extras + the g_menu rows. They reach clients via the usual member-data rules. On close: current.json re-saved (file's stock bytes, our rows over them); the next create screen takes the g_menu rows (g_lobbyCarry in PushRules).
+- Not yet: the game's own rules (time, score, mode, map). Game Options (uIdBattlePlayerMatch) is only the map list (+0x3b8..0x3c8, FUN_01004490 / FUN_01004510 session update). Phase 2 RE: where a client gets the host's 0x38 rule bytes, and whether they can change after the join.
+- Log: "lobby settings: opened / closed / <row> <value> / buttons %08x pressed".
