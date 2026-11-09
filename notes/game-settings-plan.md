@@ -175,6 +175,23 @@ bots.cpp: map start points grouped on a 40 m x/z grid -> areas (goal = point nea
 - Logs: "mods: ui: overlay hooked", "drawing on DX9/DX11 at WxH", font lines. Untested in game.
 
 ## Hit Stagger: split + increase (user, 2026-11-08)
+
+### Bot match data (2026-11-09 13:47, DX11 Steam, rules.cpp call-chain log, ca7f6d6/7e6e588)
+All hits go uHuman::vf71 (0xc6b520) -> uCharacterBase::vf71 (0x9d70a0, call at 0x9d7468) -> FUN_00ff7380 (call at
+0xff7431) -> vf151 (0x9d4210) -> pools (shrink call at 0x9d63f4, blown 0x9d65ae, third 0x9d65d8). What sits between
+tells the kinds apart (return addresses, DX11 Steam):
+| kind (user's match) | path marker | points per hit |
+|---|---|---|
+| bullets (bots' rifles) | none extra (ff7431 straight from 9d7468) / 0x1000329 (FUN_00ffff90) / 0x83649b (FUN_00836440) | shrink -65 + blown -10 (another gun -54 / -8) |
+| small ticks (pellets / fragments / fire?) | 0xfa51e1 (FUN_00fa4d70) | shrink or blown -10 / -7 |
+| melee (user, early) | 0x8472a7 (FUN_00847270) <- uCharacterBase::vf70 0x9d284a | shrink -800: always staggers |
+| anchor (user, later) | 0x834650 (FUN_008345c0) <- FUN_00834890 <- FUN_00c890e0 <- uWp00::vf70; also via 0x832e08 (FUN_00832dd0) | shrink -300 + blown -200 |
+| big knock (explosion?) | third pool straight from vf151 (0x9d65d8) | third -1000: staggered |
+Unconfirmed: grenades (user didn't do them deliberately; the third -1000 at 13:48:00 is the likely one), which of
+the bullet paths is which weapon. Plan: a thread-local hit kind set by hooks on the marker functions (melee
+FUN_00847270, anchor FUN_008345c0 / FUN_00832dd0, ticks FUN_00fa4d70; default bullet; third pool = explosion),
+read in StaggerAdd to pick the per-kind scale (0 off .. 3x, "flying" for anchor = the blown pool's knock); per-build
+addresses via sigport.py for DX9 / 1.1.
 - Report: Reduced / Low / Off did nothing against assault rifle fire. The hook only scaled the shrink pool
   (FUN_009b72a0). uCharacterBase::vf151 (DX11 0x9d4210, uHuman::vf151 just calls it) takes points from three pools:
   shrink (+0xc/+0xe, fail sets d7c 0x10), blown (+0x12/+0x14, FUN_009b7350, d7c 0x20), third (+0x18/+0x1a,
