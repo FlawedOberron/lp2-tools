@@ -52,3 +52,8 @@ later-2026-11-03.md ROADMAP items, mode-scripting-plan.md, bot-match-plan.md).
   bot-log.txt, scorelog.on, team-hud.txt, jeep files). Kept: fonts.txt, rules.txt, README.txt, steam_appid.txt.
 - Local commits not pushed / released (xlive, lp2-tools, lp2-editor): see memory lp2-night-2026-11-08.
 - Screenshot fix (game's own swap chain hook) confirmed working 2026-11-08 20:16.
+
+## Requested 2026-11-09 (later)
+- Damage modifiers per attack type (bullet, explosion, anchor, melee, fall, VS weapons...), taken and dealt, plus a headshot modifier. Rows in Match Settings (setup + lobby). The hit kind detection from Hit Stagger (StaggerKindOf, rules.cpp) can be reused; damage entry DX11 0x9b71b0 (map-editor-plan.md), uCharacterBase::vf151 hit handler 0x9d4210.
+- Random map choices including custom maps (game-settings-plan.md, lobby phase 2 TODO).
+- Bot AI: F.E.A.R.-style GOAP planner for Team Elimination (cover points from collision, LOS, squad roles), after the lobby menu.
