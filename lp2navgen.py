@@ -315,10 +315,58 @@ def generate(verts, tris, log=print):
     return v, p.astype(np.int64)
 
 
-def write(outdir, name, v, p, verts, tris, log=print):
+CROSS_KINDS = ("drop", "jump")
+CROSS_REACH = 300.0   # cm from a link's end to the polygon it's put on
+
+
+def cross_links(m, links, log=print):
+    """Drop and jump links (navzones.json "links": kind, a, b) as navmesh links between the polygons at their two ends,
+    which share no edge: the game's own pathing then plans over ledges and gaps (Capcom's training navmesh Train_46 has
+    14 such links, 2 - 4 m up or down, costs in the thousands against ~100 for a step across an edge). The crossing edge
+    is the one of the start polygon facing the far end. Costed high, so walking round stays the choice where there is a
+    way round. m: an LNV mesh dict (build_lnv / lp2nav.load), changed in place -> links added."""
+    V = np.asarray(m["verts"], float)
+    if not len(V):
+        return 0
+    T = np.array([p["tri"] for p in m["polys"]])
+    cent = V[T].mean(axis=1)
+
+    def poly_at(q):
+        q = np.asarray(q, float)
+        d = np.linalg.norm(cent - q, axis=1)
+        i = int(d.argmin())
+        return i if d[i] < CROSS_REACH else -1
+    added, seen = 0, set()
+    for e in links:
+        if e.get("kind") not in CROSS_KINDS:
+            continue
+        i, j = poly_at(e["a"]), poly_at(e["b"])
+        if i < 0 or j < 0 or i == j or (i, j) in seen:
+            continue
+        P = m["polys"][i]
+        if any(l[0] == j for l in P["links"]):
+            continue
+        seen.add((i, j))
+        b = np.asarray(e["b"], float)
+        mids = [(V[P["tri"][k]] + V[P["tri"][(k + 1) % 3]]) / 2 for k in range(3)]
+        edge = int(np.argmin([np.linalg.norm((mid - b)[[0, 2]]) for mid in mids]))
+        dist = float(np.linalg.norm(cent[i] - cent[j]))
+        P["links"].append((j, 0, edge, 3.0 * dist + 1500.0))
+        added += 1
+    if added:
+        c = list(m["counts"])
+        c[0] += added
+        m["counts"] = tuple(c)
+    log("navmesh: %d drop / jump links across ledges" % added)
+    return added
+
+
+def write(outdir, name, v, p, verts, tris, log=print, links=None):
     """List_NAME.rAINavigationMeshList + Way_NAME.rAIWayPoint in outdir (waypoints checked against the collision
-    verts / tris) -> the LNV's path"""
+    verts / tris) -> the LNV's path. links: navzones.json links, drops and jumps become navmesh links (cross_links)"""
     meshes = build_lnv(v, p, name)
+    if links:
+        cross_links(meshes[0], links, log)
     os.makedirs(outdir, exist_ok=True)
     out = os.path.join(outdir, "List_%s.rAINavigationMeshList" % name)
     open(out, "wb").write(lp2nav.write_lnv(meshes))

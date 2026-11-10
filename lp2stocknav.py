@@ -76,7 +76,14 @@ def area(nn, game, work):
     def new(name, cls, raw):
         c = zlib.compressobj(9, zlib.DEFLATED, -15)
         out.append((name, cls, 0, raw, c.compress(raw) + c.flush()))
-    new(names[29], "rAINavigationMeshList", open(os.path.join(nav, f"List_{tag}.rAINavigationMeshList"), "rb").read())
+    lnv = os.path.join(nav, f"List_{tag}.rAINavigationMeshList")
+    meshes = lp2nav.load(lnv)[1]
+    if not any(len(set(p["tri"]) & set(meshes[0]["polys"][l[0]]["tri"])) < 2 for p in meshes[0]["polys"] for l in p["links"]):
+        import lp2navgen   # made before cross links existed (--reuse): add them now
+        nz = json.load(open(os.path.join(folder, ".preview", "navzones.json")))
+        lp2navgen.cross_links(meshes[0], nz["links"], lambda t: print(f"  map {nn}: {t}"))
+        open(lnv, "wb").write(lp2nav.write_lnv(meshes))
+    new(names[29], "rAINavigationMeshList", open(lnv, "rb").read())
     new(names[30], "rAIWayPoint", open(os.path.join(nav, f"Way_{tag}.rAIWayPoint"), "rb").read())
     new(names[31], "rIntelligenceBox", box)
     arc = os.path.join(game, "nativePC", "arcXmlTmpPC", f"aArea_ONLINE_{nn}.arc")

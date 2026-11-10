@@ -462,7 +462,7 @@ def main():
     remap[used] = np.arange(len(used))
     print("@progress 0.75 waypoints", flush=True)
     tag = (p.get("info") or {}).get("tag") or "custom"
-    lnv = lp2navgen.write(os.path.join(folder, "assets", "nav"), tag, v[used], remap[kp], verts, tris)
+    lnv = lp2navgen.write(os.path.join(folder, "assets", "nav"), tag, v[used], remap[kp], verts, tris, links=nz["links"])
     rel = lambda f: os.path.relpath(f, folder).replace(os.sep, "/")
     res = dict(lnv=rel(lnv), way=rel(os.path.join(os.path.dirname(lnv), "Way_%s.rAIWayPoint" % tag)),
                polygons=int(keep.sum()), dropped=int((~keep).sum()), zones=len(nz["zones"]), links=len(nz["links"]))
