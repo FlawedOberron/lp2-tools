@@ -59,4 +59,4 @@ later-2026-11-03.md ROADMAP items, mode-scripting-plan.md, bot-match-plan.md).
 - Bot AI: F.E.A.R.-style GOAP planner for Team Elimination (cover points from collision, LOS, squad roles), after the lobby menu.
 - Voice chat settings (user, 2026-11-09): an options page for voice (on/off, push-to-talk vs open mic + key, input/output device, volumes, mute per player). Find how the xlive voice path works today (XHV / Steam voice in xlive-steamworks) before designing.
 - Bots on stock maps (2026-11-09): navmesh now loaded per stock area (stockarea.cpp); zones grouped into regions for roaming (bots.cpp RegionsBuild). Map 12 nav still poor.
-- Stagger rows to add later (user, 2026-11-10): Airborne Bullet and Airborne Headshot (hits on a target in the air), next to Headshot Stagger (head part from the hit part probe, rules.cpp HitPartProbe).
+- Stagger rows (built 2026-11-10, untested in game): Headshot, Airborne Bullet, Airborne Headshot (rules.cpp HitIsHead, CharacterAirborne). Not counted as airborne yet: hanging still from an anchor.
