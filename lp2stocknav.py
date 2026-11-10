@@ -19,7 +19,11 @@ The data is derived from the player's own install (collision outlines), no game 
   29/30/31 naming them, as COPY / ADD ops against the player's own (lp2brain.delta). The DLL .incbin's it
   (src/mods/stockarea.bin) and adds them to aArea_ONLINE_NN.arc when the game opens it. Little endian:
     'SAR1' u32 maps; per map: u32 map, u32 entries; per entry: u16 n name, u16 n class, u8 kind (0 new, deflated;
-    1 ops against the stock entry of that name), u32 size, u32 crc32 (of the result), u32 n, n bytes
+    1 ops against the stock entry of that name; 2 copied from the player's own archive named by the n bytes, in the
+    same folder), u32 size, u32 crc32 (of the result), u32 n, n bytes
+  Stock maps whose stage has a training version (TRAINING) get Capcom's own navmesh, way points and intelligence box,
+  copied at load from the player's aArea_TUTOREAL_NN.arc: hand made, with their jump links, where the generated one
+  misses connections (Pirate Fortress' levels only joined by grapples).
 """
 import argparse, glob, json, os, struct, subprocess, sys, tempfile, zlib
 
@@ -62,6 +66,9 @@ def build(nn, game, library, work):
     return json.load(open(os.path.join(prev, "navzones.json")))
 
 
+TRAINING = {"01": "41", "09": "46", "10": "31", "12": "26"}   # online map -> training area on the same stage (navmesh extents)
+
+
 def area(nn, game, work):
     import lp2mapc, lp2nav, lp2brain, numpy as np
     folder = os.path.join(work, "map" + nn)
@@ -73,6 +80,24 @@ def area(nn, game, work):
         tri = np.frombuffer(f.read(n * 36), "<f4").reshape(-1, 3)
     box = lp2nav.empty_intelligence_box((float(tri[:, 0].min()), float(tri[:, 2].min())), (float(tri[:, 0].max()), float(tri[:, 2].max())))
     out = []
+    arcs = os.path.join(game, "nativePC", "arcXmlTmpPC")
+    if nn in TRAINING:
+        src = f"aArea_TUTOREAL_{TRAINING[nn]}.arc"
+        e = lp2mapc.entries(os.path.join(arcs, src))
+        names = {}
+        for kind, cls in ((29, "rAINavigationMeshList"), (30, "rAIWayPoint"), (31, "rIntelligenceBox")):
+            nm, raw = e[cls][0]
+            names[kind] = nm
+            out.append((nm, cls, 2, raw, src.encode()))
+        print(f"  map {nn}: Capcom's navmesh from {src} ({names[29]})")
+        for nm, b in lp2mapc.entries(os.path.join(arcs, f"aArea_ONLINE_{nn}.arc")).get("rScrList", []):
+            patched = lp2nav.scrlist_add(b, sorted(names.items()))
+            out.append((nm, "rScrList", 1, patched, lp2brain.delta(b, patched)))
+        rec = [struct.pack("<II", int(nn), len(out))]
+        for name, cls, kind, raw, data in out:
+            rec.append(struct.pack("<H", len(name)) + name.encode("latin-1") + struct.pack("<H", len(cls)) + cls.encode()
+                       + struct.pack("<BIII", kind, len(raw), zlib.crc32(raw), len(data)) + data)
+        return b"".join(rec)
     def new(name, cls, raw):
         c = zlib.compressobj(9, zlib.DEFLATED, -15)
         out.append((name, cls, 0, raw, c.compress(raw) + c.flush()))
