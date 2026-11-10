@@ -58,5 +58,6 @@ later-2026-11-03.md ROADMAP items, mode-scripting-plan.md, bot-match-plan.md).
 - Random map choices including custom maps (game-settings-plan.md, lobby phase 2 TODO).
 - Bot AI: F.E.A.R.-style GOAP planner for Team Elimination (cover points from collision, LOS, squad roles), after the lobby menu.
 - Voice chat settings (user, 2026-11-09): an options page for voice (on/off, push-to-talk vs open mic + key, input/output device, volumes, mute per player). Find how the xlive voice path works today (XHV / Steam voice in xlive-steamworks) before designing.
+- Voice chat rules (user, 2026-11-10): BUILT, untested (xlive b628e97, not installed yet). Host rules Team Voice / Enemy Voice (one Voice Chat row outside team games): Always, Living, Nearby (full to 15 m, gone at 30 m), None. mods/voice.cpp; applied where voice is played, talker -> slot from member data "vslot". Needs a 2-player test.
 - Bots on stock maps (2026-11-09): navmesh now loaded per stock area (stockarea.cpp); zones grouped into regions for roaming (bots.cpp RegionsBuild). Map 12 nav still poor.
 - Stagger rows (built 2026-11-10, untested in game): Headshot, Airborne Bullet, Airborne Headshot (rules.cpp HitIsHead, CharacterAirborne). Not counted as airborne yet: hanging still from an anchor.
