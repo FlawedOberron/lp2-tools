@@ -45,6 +45,11 @@ later-2026-11-03.md ROADMAP items, mode-scripting-plan.md, bot-match-plan.md).
    out and recreate the match each round (was "post-game game settings menu"). Related: game-settings-plan.md (our own rule storage, presets per game type),
    requests-mp-menu.md.
 
+## Requested 2026-11-12
+- Spawning options (Instant Random / Safe / Unsafe, Near Allies, Zones Set / Dynamic, Spawn Distance, Data Posts) +
+  setup menu Begin Match pinned to the panel bottom with dividers: BUILT and installed 2026-11-12, untested, uncommitted.
+  See spawning-plan.md.
+
 ## Carried over (open, from the last sessions)
 - Black screen + hang at the title screen after the PC resumed (2026-11-09 12:28): all threads waiting on a lock,
   log stopped at the title; overlay hooked normally. If it repeats: test with ModCache\no-ui.txt.

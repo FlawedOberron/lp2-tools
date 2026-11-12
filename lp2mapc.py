@@ -435,7 +435,8 @@ def gravity_manifest(p):
     damage volumes (damage.cpp: "damage": {player, vs: % of full health per second; player_kill / vs_kill: at once}),
     one-way walls (oneway.cpp: "oneway": {players, vs, bullets, grenades, akrid}: crossed along the box's arrow only),
     force volumes (force.cpp: "force": {mode, vector (m/s, or m/s per second for continuous), local, flags as one-way's}:
-    map.json "force" in cm, game axes, turned by the yaw when local)"""
+    map.json "force" in cm, game axes, turned by the yaw when local), spawn zones (respawn.cpp: "spawn": {team 0 / 1 / -1,
+    order})"""
     env, out = p.get("environment", {}), {}
     if env.get("jump_packs"):
         out["jump_packs"] = True
@@ -451,6 +452,7 @@ def gravity_manifest(p):
     damage = []
     oneway = []
     force = []
+    spawn = []
     sids = script_volume_ids(p)
     for v in all_parts(p):
         lo, hi = volume_local(v)
@@ -483,6 +485,11 @@ def gravity_manifest(p):
             mode = q.get("mode", "continuous")
             if flags and (x or y or z) and mode in ("continuous", "impulse", "velocity"):
                 force.append(dict(min=lo, max=hi, mode=mode, force=[round(x, 3), round(y, 3), round(z, 3)], **flags, **turn))
+        if v.get("spawn"):   # a spawn zone (xlive respawn.cpp: Spawning > Spawn Area: Zones): team 0 / 1 / -1 nobody
+            q = v["spawn"]
+            team = int(q.get("team", -1))
+            spawn.append(dict(min=lo, max=hi, team=team if team in (0, 1) else -1, order=int(q.get("order", 0)),
+                              **({"yaw": turn["yaw"]} if "yaw" in turn else {})))
         if volume_gravity(v) is not None:
             vols.append(dict(min=lo, max=hi, gravity=volume_gravity(v), **turn))
         if v.get("post"):
@@ -502,6 +509,8 @@ def gravity_manifest(p):
         out["oneway_volumes"] = oneway
     if force:
         out["force_volumes"] = force
+    if spawn:
+        out["spawn_volumes"] = spawn
     return out
 
 
