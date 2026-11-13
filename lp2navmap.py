@@ -619,7 +619,7 @@ def main():
     else:
         if hand:
             print(f"navmesh: {hand} not found, generating instead")
-        v, poly = lp2navgen.generate(verts, tris, agent=agent)
+        v, poly = lp2navgen.generate(verts, tris, agent=agent, solid=st.get("solid", True) is not False)
     if not len(poly):
         raise SystemExit("no walkable surface found in the movement collision")
     print("@progress 0.55 welds", flush=True)

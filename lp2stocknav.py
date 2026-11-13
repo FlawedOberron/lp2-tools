@@ -55,7 +55,8 @@ def build(nn, game, library, work):
                     "--game", game, "--library", library], check=True, stdout=subprocess.DEVNULL)
     pj = os.path.join(folder, "project.json")
     p = json.load(open(pj))
-    p["nav_settings"] = dict(p.get("nav_settings") or {}, weld=STOCK_WELD)
+    p["nav_settings"] = dict(p.get("nav_settings") or {}, weld=STOCK_WELD, solid=False)   # no inside-solid test: top-only
+    # ledge / overhang sheets made it drop the floors under them (map 15: 74 spawns off the navmesh -> 20)
     p["volumes"] = [v for v in p.get("volumes", []) if not v.get("stock_limits")] + [
         {"pos": list(pos), "size": list(size), "yaw": 0.0, "limits": True, "stock_limits": True} for pos, size in STOCK_LIMITS.get(nn, ())]
     json.dump(p, open(pj, "w"), indent=1)

@@ -328,9 +328,11 @@ def snap_corners(verts, tris, v, p, join=SNAP_JOIN * AGENT["climb"]):
     return nv, newp[ok]
 
 
-def generate(verts, tris, log=print, agent=None):
-    """the walkable surface of a collision mesh (cm): Recast, minus polygons inside solid pieces, heights snapped
-    onto the collision -> v (n, 3), p (m, 3) triangles. agent: Recast settings over AGENT (climb, slope, radius)"""
+def generate(verts, tris, log=print, agent=None, solid=True):
+    """the walkable surface of a collision mesh (cm): Recast, minus polygons inside solid pieces (solid: False keeps
+    them: a top-only ledge or overhang sheet looks the same from under it, stock ONLINE_15 lost floors under ledges
+    with spawns on them), heights snapped onto the collision -> v (n, 3), p (m, 3) triangles. agent: Recast settings
+    over AGENT (climb, slope, radius)"""
     agent = dict(AGENT, **(agent or {}))
     v, p, _, rlog = recast(verts, tris, agent)
     if len(p) == 0:   # wound the other way for Recast
@@ -339,6 +341,9 @@ def generate(verts, tris, log=print, agent=None):
     v, p = snap_corners(verts, tris, v, p, join=SNAP_JOIN * agent["climb"])
     # inside a solid piece: the centre and at least 2 corners (on the surface after snapping). The centre alone
     # misreads big polygons over sloped or stepped roofs, whose middle lies under the roof's own surface
+    if not solid:
+        log("inside-solid test off: no polygons dropped")
+        return v, p.astype(np.int64)
     vin = inside_solid(verts, tris, v)
     keep = ~(inside_solid(verts, tris, v[p].mean(axis=1)) & (vin[p].sum(axis=1) >= 2))
     p = p[keep]

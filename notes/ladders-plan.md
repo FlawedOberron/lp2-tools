@@ -64,3 +64,20 @@ Scripts: stock_mapreport.py WORK (pieces / dropped chunks), stock_offmarks.py WO
   size (26910,6870,33030): the central crater; y 389 taken as the box's middle (as the floor it cut half the
   crater floor; the editor's Position is the floor centre, user may have typed the middle). 06 launcher still open.
   lp2stocknav --reuse --rebuild 07,15 rebuilds just those maps.
+
+## Spawns over no navmesh: causes (2026-11-13, user: "something wrong with our translation?")
+- The earlier "markers off the navmesh" list counted every layout point and object. Spawns only, with the real floor
+  under each (stock_spawncheck.py WORK [mapNN]): most maps fine.
+- Translation bug: ONLINE_01's archive also holds ONLINE_00's 29 rInitPosSet files (aArea_Online_00-*), and
+  stock_layout took every file, so Turbulent Jungle's layout had map 00's spawns (floating over nothing). Fixed:
+  lp2project.own_file filters by the map number in the name (01: 1140 markers -> 759; navmesh unchanged). Editor
+  imports of Turbulent Jungle made before this have the extra spawns: re-import.
+- Navgen: the inside-solid test (lp2navgen.inside_solid, for ONLINE_12's hollow blocks) dropped floors under top-only
+  ledge / overhang sheets: Frozen Wasteland 74 spawns on floor without navmesh. nav_settings "solid": false skips it;
+  stock builds use it (15: 74 -> 20, playable 41351 -> 51421 polys, 872 of 879 markers seeded).
+- Left: NEOS 99 spawns with no floor (x -360..-450 m, outside the box: ships?), 16 under the box floor (y -46 m);
+  Cube's floor is the moving cubes (Capcom navmesh); small counts on 03 / 04 / 05 / 11.
+- Full stock rebuild with solid off (installed, uncommitted): every map same or better on stock_spawncheck; playable
+  polys 00 25355->25585, 02 5648->5968, 04 7025->7855, 05 20658->23241, 06 2246->2278, 07 8643->9049, 08 5098->5472,
+  11 44901->47170, 15 41351->51421. stockarea.bin 5.78 -> 6.37 MB. Editor has no "solid" toggle yet (custom maps keep
+  the test on unless project.json nav_settings.solid = false).

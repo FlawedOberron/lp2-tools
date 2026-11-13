@@ -39,7 +39,7 @@ project.json (format "lp2map", version 1):
   lights       placed lights: [{type point | spot, pos [cm], colour, brightness, start, end; spot: dir, cone,
                spread (degrees)}] (lp2light.py add_lights)
 """
-import argparse, json, os, shutil, subprocess, sys, zlib
+import argparse, json, os, re, shutil, subprocess, sys, zlib
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import arcx  # noqa: E402
@@ -168,7 +168,8 @@ def import_lp2(num, out, name, game, library, tag=None, size="large"):
     if hav is None:
         raise SystemExit(f"online {nn}: no physics (rHkCollision) in its _v archive")
     open(os.path.join(dst, "physics.rHkCollision"), "wb").write(hav[1])
-    files = [(lp2mapc.base(n), cls, d) for E in (main_, v) for cls in ("rInitPosSet", "rObjSet") for n, d in E.get(cls, [])]
+    files = [(lp2mapc.base(n), cls, d) for E in (main_, v) for cls in ("rInitPosSet", "rObjSet") for n, d in E.get(cls, [])
+             if own_file(lp2mapc.base(n), nn)]   # ONLINE_01 also carries ONLINE_00's spawn files (29): not its own
     json.dump(lp2layout.stock_layout(files), open(os.path.join(out, "layout.json"), "w"), indent=1)
     env = dict(ENVIRONMENT)
     if nn in SKY_MAPS:
@@ -191,6 +192,13 @@ def import_lp2(num, out, name, game, library, tag=None, size="large"):
         p["ladders"] = ladders   # the navmesh's ladder links (lp2navmap.add_ladders)
     save(out, p)
     return p
+
+
+def own_file(name, nn):
+    """a stock map's spawn / pickup file names its map (aArea_ONLINE_NN-Mode-VV); one that names another map
+    (aArea_Online_00-... in ONLINE_01's archive, unused there) isn't this map's"""
+    m = re.search(r"aArea_ONLINE_(\d\d)", name, re.I)
+    return m is None or m.group(1) == nn
 
 
 def new_empty(out, name, game, tag=None, size="medium", ground=100.0):

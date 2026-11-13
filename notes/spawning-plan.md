@@ -150,3 +150,29 @@ Spawn Distance from where you died (Any / Near / Medium / Far). Sub-options hidd
   rounds played, times boost factors (FUN_009aa5b0 abilities 0x25-0x29, floats per build). Career total only.
 - Frametime spikes reported. ui.cpp FrameWatch (Present hooks): slow frames (>40 ms and >2.5x average) logged with our
   hooks' time that frame (CostScope in bots ThinkBody/Resolve/PathStep, rules HitHandler, radar hooks). Log: "mods: frame:".
+
+## 2026-11-13 user test of test-2026-11-13
+- Good: Occasional Interval, Grenade Swap (empty slot), Spawn T-ENG, fewer bot headshots, editor navmesh tools.
+- Editor navmesh tools to improve (user): hold Ctrl while dragging a vertex to merge it onto another; clicking a vertex
+  handle sometimes passes through and adds a new vertex elsewhere (handle pick must win over the outline click).
+- Still to test: ladders (Kraftwerk 02 first, then Helix 08), spawned-without-grenades fix, grenade key lockout.
+- 2026-11-13 later test: ladders WORK (bots climb), grenade key unlock WORKS. Career +2339 added, but the Fraction
+  (faction) level didn't move: by design so far (career.cpp adds the career total only; Fraction points game +0x509ec
+  are in the skipped points block). User asks if it's a DNF issue: no.
+- Frame spikes persist (45-60 ms every 3-8 s, also in the lobby after the match): our hooks ~0 ms in them. System:
+  Steam background game recording is ON (localconfig BackgroundRecordMode 1, 3.6 GB gamerecordings; journal: clip
+  trimming + audio mix all match); plasmashell ~19% of a core (QSGRenderThread + a QFFmpeg decode thread: video
+  wallpaper / media widget?); VRAM widget not spamming any more. Suggested: one match with background recording off.
+- Decoy grenades (user): bots stare at decoys, even their own / teammates', never shoot them. Wanted: ignore
+  friendly decoys; don't switch to a decoy unless the real target is out of sight; smarter bots shoot enemy decoys
+  near enemies and move away from nearby ones; dumber bots shoot any decoy they look at. Needs RE: how the game's
+  AI targets a decoy (target list / grudge entry for the decoy object, its owner / team), then filter in bots.cpp.
+- 2026-11-13 22:17 System Link "Communication Error - Connection Lost" again, bot match (area_online_13), no window
+  minimised: the game called XSessionDelete 0.2 s after a respawn; nothing of ours logged before it (the only notify
+  was a Steam friend presence change at 22:13). The earlier one was blamed on minimising; maybe not.
+  Built (not installed: game running) mods/gamelog.cpp: the game's network library (sNetworkLibraryXbox, DX11
+  DAT_018de398, DX9 DAT_018ce2d8, 1.1 0x18df398 / 0x18ce2d8) print methods vtable +0x20 (level, fmt), +0x24 (error),
+  +0x28 (warning) are "xor eax,eax; ret" stubs: a copied vtable routes them to our log ("game net ..."; 10 lines/s,
+  repeats dropped). Strings to look for: "Upstream disconnected", "no receive timeout", "leaveSession timeouted",
+  "setNetworkConnectionEvent ... error", "relay auth error".
+- Fraction points from bot matches: career.cpp, built + installed 22:04, untested (log "+N Fraction points").
