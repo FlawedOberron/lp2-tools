@@ -186,6 +186,9 @@ def import_lp2(num, out, name, game, library, tag=None, size="large"):
              layout=dict(file="layout.json", lift=False, lp1_vs=False),
              environment=env,
              source=dict(lp2=nn))
+    ladders = lp2layout.stock_ladders(files)
+    if ladders:
+        p["ladders"] = ladders   # the navmesh's ladder links (lp2navmap.add_ladders)
     save(out, p)
     return p
 

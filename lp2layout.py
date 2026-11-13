@@ -307,6 +307,34 @@ def patch_objset(b, lay, lp1_vs=False):
     return reindexed(bytes(out + b[end:])), counts, new_counts
 
 
+LADDER_ITEM = 0x2283   # om8322: a ladder, at its foot; mUserData[4] (+0x84) its height in cm, rot Y its facing
+
+
+def stock_ladders(files):
+    """a stock map's object files [(entry base name, class, data)] -> project.json "ladders" [{pos, yaw, height}]: the
+    om8322 records (group 3, in the -Common file), each ladder once"""
+    out, seen = [], set()
+    for name, cls, b in sorted(files):
+        if cls != "rObjSet":
+            continue
+        counts, _, _ = objset.parse(b)
+        off = 0x30
+        for g in (1, 2, 3, 4):
+            for _ in range(counts[g]):
+                rec = b[off:off + objset.SIZES[g]]
+                off += objset.SIZES[g]
+                if g != 3 or struct.unpack_from("<H", rec, 0x1A)[0] != LADDER_ITEM:
+                    continue
+                pos = [round(x, 1) for x in struct.unpack_from("<3f", rec, 0x40)]
+                key = tuple(round(x) for x in pos)
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append({"pos": pos, "yaw": round(struct.unpack_from("<f", rec, 0x54)[0], 1),
+                            "height": float(struct.unpack_from("<i", rec, 0x84)[0])})
+    return out
+
+
 def stock_layout(files):
     """a stock map's spawn / pickup files [(entry base name, class, data)] -> an explicit editor layout (the inverse
     of patch_initpos / patch_objset): one set per variant (-00 .. -03), every game type's markers in it, a marker

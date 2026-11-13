@@ -40,6 +40,7 @@ ALL = (1 << 64) - 1
 # EvaluateAIParam modes (cAIParam bytes, see bots.cpp)
 P_QUICK, P_CALM, P_ATTACK, P_HOLD, P_IMPATIENT, P_FOLLOW, P_GRENADE, P_APPEAL = 1, 2, 3, 4, 7, 9, 10, 11
 P_TARGET_RELOAD = 15                                                                  # DLL only (bots.cpp EvalParam): 100 while the target reloads
+P_OWN_EMPTY, P_BOLD = 16, 17   # DLL only: 100 while the bot's own gun is empty / reloading; the bot's boldness 0-100 (per slot)
 P_POST_FREE, P_OWN_LIFE, P_TARGET_LIFE = 12, 13, 14                                  # percent, written by the DLL (bots.cpp LifePercent)
 
 
@@ -323,6 +324,37 @@ def improved(b):
     swap("WpChange-Far", [b.dist(1800, inner=0), b.weapon(SHORT), b.weapon(SHORT, inverse=1, mode=3)], 1100)
     swap("WpChange-HeavyClose", [b.dist(600), b.weapon(HEAVY), b.weapon(HEAVY, inverse=1, mode=3)], 1300)
     swap("WpChange-Long", [b.dist(2500, inner=0), b.weapon(LONG, inverse=1), b.weapon(LONG, mode=3)], 900)
+
+    melee(b)
+
+
+def melee(b):
+    """Bold bots (P_BOLD, the DLL's per-bot trait by archetype) go in for the melee (pad action 1, stock Strike: target
+    within 6 m, not a VS). Out of ammo or reloading near the target: run in and strike instead of reloading (MeleeRush;
+    about 1100-2200 against ReloadHere's 1400 and Reload-to-cover's 2000, so only bold ones, or close ones). Close in while
+    still firing, then strike as the magazine runs dry (MeleePush; past ShotTaregt's ~1100 only for the boldest)."""
+    fight, run, strike = b.item("Fight"), b.item("RunToTarget", 1), b.item("Strike")
+    b.lst(strike, "Evaluation").append(b.e_param(P_BOLD, 600))
+    not_vs = [o for o in b.lst(strike, "Filter") if b.is_a(o, "cAIPlanFilterCharIsXXX")]
+
+    def rush(name, filters, evals, shoot):
+        it = b.clone(run, name)
+        b.lst(it, "Filter")[:] = filters + copy.deepcopy(not_vs)
+        b.lst(it, "Evaluation")[:] = evals
+        for m in b.funcs(it, "Move", "cAIPlanMoveTrace"):
+            b.set(m, "mArriveRadius", 150.0)
+        if not shoot:
+            b.lst(it, "Move")[:] = [m for m in b.lst(it, "Move") if not b.is_a(m, "cAIPlanMoveShot")]
+        hit = b.clone(strike, name + "-Strike")      # there: the strike (only reached from the run)
+        b.lst(hit, "Filter")[:] = [b.dist(300)] + copy.deepcopy(not_vs)
+        b.lst(hit, "Evaluation")[:] = [b.e_default(3000)]
+        b.link(it, hit)
+        b.link(fight, it)
+
+    rush("MeleeRush", [b.dist(1500), b.dist(150, inner=0)],
+         [b.e_param(P_OWN_EMPTY, 2000), b.e_param(P_BOLD, 1200), b.e_default(-1500), b.e_dist(600, 600)], False)
+    rush("MeleePush", [b.dist(1200), b.dist(250, inner=0)],
+         [b.e_param(P_BOLD, 1800), b.e_dist(800, 400), b.e_default(-700)], True)
 
 
 def post_grab(b):

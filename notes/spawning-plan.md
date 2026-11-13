@@ -37,3 +37,116 @@ Spawn Distance from where you died (Any / Near / Medium / Far). Sub-options hidd
 
 ## Open
 - LOS for threat; zone fences on the overlay; syncing dynamic zones from the host; respawn delay setting.
+
+## 2026-11-13 test (DX9, Guardian, team bot match)
+- Random: good. But the spawn-point menu still showed: it isn't the state 3 countdown, it's the second half of state 1
+  (the cockpit shows it while +0x100 <= 0 < +0xfc). Fixed (installed, untested): RespawnAfter, right after the
+  controller's update, goes 1 -> 4 as soon as the death camera's timer (+0x100) is done, clearing both timers; the old
+  hold of the countdown's length in the death view is gone.
+- Radar team colours never drew: the blip add (FUN_00ed8aa0) returns a pointer, not the entry index, so no side was ever
+  stored (no "blip kind" line in any log). Add now takes the index from the buffer count. Untested; look for
+  "radar: blip kind N for own team".
+- Bot stalls: stall map added (bots.cpp IdleTrack): every 60 s "bots: stall map" + worst 5 m cells with positions,
+  stalled-on-a-path vs no-path seconds.
+
+## 2026-11-13 second run (DX9, Guardian team bot match)
+- Instant spawn: user says good.
+- Radar: sides now recorded ("blip kind 5"), but colours were ARGB guesses; the draw (FUN_00ed8fb0) uses ABGR
+  (enemy codes 0xff4040ff red, code 0x21 0xffff8060 blue). Now own 0xffff8060 / enemy 0xff4040ff. Untested.
+- Bot aim: AimHeight (bots.cpp) lowers the game's aim point to 0.62 of its height above the target's feet unless a
+  head spell is rolled every ~1.5-2.5 s (easy 5 %, normal 15 %, hard 35 %, veteran 60 %); soldiers only. Aim log line
+  now gives the game's point height ("N cm above the feet") to check the 0.62. Untested.
+- Bot stalls: stall map's worst cells = spawn points on small navmesh islands (Guardian List_guarde97: 1437 polys in
+  14 link components: 1047, 217, 45, 38, 27, 23, ...). Routing is per bot zone (ZoneWaypoint), so a zone spanning an
+  island and the floor gives "same zone: run at the goal" and the game's path search finds nothing. Jump/grapple
+  presses are only logged with bot-log.txt (not checked). User: nearly all of Guardian is reachable on foot, so the
+  islands are navgen splits (AGENT climb 55 cm, slope 50, radius 40) -> editor: colour islands + weld edges (asked).
+- Quick Resupply with 0 grenades, other grenade type: needs the slot swap. FUN_009d21e0 (DX11) thiscall(fighter,
+  weapon, slot) puts a weapon in a slot (+0x1688 + slot*4), callers incl. the spawn FUN_008fb130; old grenade must be
+  dropped/hidden too. Not built.
+
+## 2026-11-13 navmesh pieces + welds (editor), grenade swap (all uncommitted, untested in game)
+- lp2navgen: pieces(), auto_welds (open edges of different pieces within "weld" cm across, <= climb up, clear line
+  60 cm up through the collision), manual_welds (project "nav_welds" [{a, b}] cm), weld_links (LNV links both ways,
+  cost centre distance + 50); generate(agent=) for project "nav_settings" {climb, slope, radius, weld}.
+  lp2navmap: welds join regions (playable area) and zones (walk links); navmesh.bin + piece u16 per tri + welds.
+  lp2mapc NAV_INPUTS + nav_settings / nav_welds (stamp).
+- Guardian (copy in scratch): 47 pieces (largest 419 of 1437) -> weld 100 cm: 300 welds (6 blocked by walls),
+  18 pieces, largest 1286; zones 75 -> 46.
+- Editor navmesh.gd: Colour by Radar floor / Piece, Generation settings, Add weld (two clicks; right click cancels),
+  weld lines (white auto, yellow hand, orange unbuilt). Godot --check-only clean; not run in the GUI.
+- resupply.cpp GrenadeSwap: empty grenade slot + another kind underfoot -> game equip FUN_009d3f80 (DX9 0x9c45c0,
+  DX11 1.1 0x9d3ee0, DX9 1.1 0x9c4340), the dropped empty one hidden. Log "resupply: grenades: took ...".
+  Each PC swaps locally (puppets too); a remote PC's view of a puppet's grenade count may differ (online untested).
+- Navmesh hand edits (same day): project "nav_removed" / "nav_added" [{brush: [[x,y,z]...], r} | {piece: [x,y,z]}]
+  (lp2navmap.marked: brushes, then pieces over shared edges only, never welds: a weld-joined piece removed the whole
+  main floor in the first test). Added back first (overrides markers / kill floor / kill / limits), then removed.
+  Editor: Action Take out / Add back, Piece / Brush tools, grey / blue preview, list with Show / Undo. Guardian copy:
+  removed 21, added back 22 as expected. GUI not run.
+- ROOT CAUSE of the split navmesh (2026-11-13): lp2navgen.snap_corners snapped each triangle's corners on its own and
+  re-joined copies only at the same spot to 5 mm, so stairs / ramps (copies 40-70 cm apart) split. Recast itself has
+  Guardian's main piece at 1286 polys; after the old snap 419 / 194 / 184 / 168 / 153. Now copies within 1.5 x climb
+  stay one vertex (median height): Guardian playable area 47 pieces -> 19 (largest 1284 of 1435), no welds.
+- Asked next (user): navmesh hand editing - verts as handles, drag vert onto vert to weld, show edges, drag edge onto
+  edge to weld (closest ends), right click to remove; a small tool bar in the Navmesh window; export / import the
+  navmesh as a file (grapple / drop / jump marking later; "wall mesh" later?). Also: bots aware when fired at (not
+  only hit), reaction scaled by angle and by difficulty.
+
+### 2026-11-13 (later): n-gon navmesh editing + bots react to being shot at
+- Editor: Navmesh window toolbar (navedit.gd): Hand edit freezes the built navmesh (navmesh.bin, all triangles) into
+  assets/nav/edited.obj (project.json "nav_mesh"); lp2navmap.read_obj uses it instead of lp2navgen.generate (welds, marks,
+  playable area, zones as before); "nav_mesh" is in lp2mapc NAV_INPUTS. Select (click / Shift / box), vertex drag-merge,
+  Enter = n-gon (outline loops, holes bridged, Geometry2D triangulate, winding kept), add corner on outline (splits the
+  outside triangle), Delete free corners, Esc cancel, Ctrl+Z. Export / Import OBJ, Regenerate (drops "nav_mesh", rebuilds).
+  Tested headless (merge, hole, split, OBJ round trip) and Guardian frozen build = generated build (1435 polys, 19 pieces).
+  Not tried in the GUI by me.
+- Bots (installed, untested): radar Shot records the shooter's facing (world matrix Z row +0xc0; first shot logs it against
+  the quaternion at +0x40 to confirm). bots FiredAt: a shot in the last 600 ms facing the bot within 2.5 m + 7% of distance,
+  up to 60 m, 6 m up/down -> pending reaction if it has no target or the shooter is < 0.8x its target's distance.
+  ReactionDelay = (kReaction + kMissExtra for misses) x (1 + kAngleCost x off-facing/180, half for hits) x 0.85-1.15.
+  TargetAttacker now inserts a shooter missing from the grudge table (FUN_0090ffb0 targets the top value).
+  Log: "bots: slot N shot at / hit (X deg off its facing)".
+
+### 2026-11-13: career points from bot matches (installed, untested)
+- Why none: match-end results DX11 FUN_0100b6b0 (DX9 0xffb2d0, 1.1 0x100b9a0 / 0xffb5e0) adds the match points to the
+  career total (DAT_01852238 +0x5060[FUN_0081fd80(-1)], 3 ints) and the per-mode rank stats (+0x7ee0 records,
+  leaderboards) only when session +0xcc64 == 1 (not System Link) and +0x1136db == 1. Bot matches are System Link.
+- User chose "career points only". career.cpp hooks it: non-online + a bot slot (slots +0x1b1) + results +0x138 == 3 ->
+  after the original, the game's final points (game +0x817c, boosts applied; sentinel shows whether it was set) go on
+  +0x5060[mode]. Rank stats untouched. Log: "career: bot match: +N career points (mode M: a -> b)".
+
+### 2026-11-13: radar team colours, real cause
+- Log: "blip kind 5 for own team". FUN_00edd730 maps add kinds 1-2 -> code 5, 3-4 -> 6, 5-6 -> 9, 7-8 -> 10, 9 -> 8 (flag 4:
+  7 / 0xb); FUN_00ed8fb0 draws 5-7 green, 8-0xb red. In bot matches the game adds teammates as kind 5 (red markers), and
+  MarkSides / Draw only handled kinds 1-4 / codes 5-7, so nothing was ever recoloured. Now kinds 1-9 / codes 5-0xb.
+- Shooter facing confirmed in game: matrix Z row == quaternion forward.
+- Grey main navmesh after save: applied piece marks re-matched the neighbouring (main) piece. lp2navmap result now lists
+  the applied marks ("marks"); the editor previews only newer ones (navmesh.gd _unbuilt). Needs one Generate per project.
+- Stock navmesh rebuild with the snap fix: lp2stocknav.py --work ~/Projects/lp2-build/stocknav-work (14 maps) ->
+  src/mods/stockarea.bin + stocknav_data.h, for the next publish.
+
+### 2026-11-13: stock navmesh rebuilt + bot traits (installed, untested)
+- lp2stocknav.py rerun with the snap fix (work folder ~/Projects/lp2-build/stocknav-work, ~25 min): stocknav_data.h +
+  stockarea.bin regenerated (maps 01/09/10/12 still Capcom's training navmesh). For the next publish.
+- bots.cpp per-slot SlotTraits (with the archetype, jittered): social (lone wolf <= 0.35, co-dependent >= 0.6), bold,
+  grapple cost factor. Logged on the "is a <archetype>" line.
+  - Social (RoamPoint, team games): co-dependents goal = nearest teammate human (x0.6 distance) or co-dependent bot within
+    80 m, re-picked every 3 s, no goal within 8 m; lone wolves add up to 60 points to areas within 40 m of teammates.
+  - Grapple links: (350 + 0.5 x length) x the bot's grapple factor (was 1500 + length): grappling now competes with walking.
+  - Melee: EvalParam modes 16 (own gun empty / reloading) and 17 (bold); lp2brain.py melee(): Strike + bold 600,
+    MeleeRush (no shooting, 1.5-15 m, empty 2000 + bold 1200 - 1500 + close 600) and MeleePush (firing, 2.5-12 m,
+    bold 1800 + close 400 - 700), each linked to a 3 m strike (pad action 1). brains.h regenerated.
+
+## 2026-11-13: Occasional Interval (Stagger page)
+- New rule row "Occasional Interval" (extras key staggerEvery, rules string socc=, own row 34): 0.5 s .. 5 s in 0.5 s steps,
+  default 1.5 s (the old fixed kOccasionalMs). Applies to Flinch Occasional and Knock Occasional on every stagger row.
+  Setup Stagger page (after Melee Stagger) + lobby list. Built + installed, untested.
+
+## 2026-11-13 later: career points take 2, frame watch
+- Bot match test: "career: bot match ended, but the game worked out no points (session flags 0x6a)". The results
+  function only computes match points when session flag 0x4 (ranked/player match) is set or game +0x257 == 0; that
+  block also adds Fraction points, the matches-played count (+0x506c) and Fraction/match achievements (FUN_007f52c0,
+  FUN_0080f500). career.cpp now computes the points itself: slots +0x1154[player] + 100 x round wins (+0x1ad4) when all
+  rounds played, times boost factors (FUN_009aa5b0 abilities 0x25-0x29, floats per build). Career total only.
+- Frametime spikes reported. ui.cpp FrameWatch (Present hooks): slow frames (>40 ms and >2.5x average) logged with our
+  hooks' time that frame (CostScope in bots ThinkBody/Resolve/PathStep, rules HitHandler, radar hooks). Log: "mods: frame:".

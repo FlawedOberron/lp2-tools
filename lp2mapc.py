@@ -824,7 +824,7 @@ def script_preload(game, p):
     return sorted(have[w] for w in want if w in have)
 
 
-NAV_INPUTS = ("base", "collision", "geometry", "layout", "source", "stage", "terrains", "volumes")
+NAV_INPUTS = ("base", "collision", "geometry", "layout", "source", "stage", "terrains", "volumes", "nav_settings", "nav_welds", "nav_removed", "nav_added", "nav_mesh", "ladders")
 
 
 def nav_stamp(folder):

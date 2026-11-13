@@ -10,7 +10,7 @@ areas, aArea_TUTOREAL_*, do), so bots route on these in System Link and online m
 
 Embedded form (little endian, raw deflate; the DLL inflates it with puff):
   u32 zones; per zone: f32 pos[3], f32 size[3], u16 loops, per loop u16 points, points x f32[3]
-  u32 links; per link: u16 from, u16 to, u8 kind (0 walk 1 jump 2 drop 3 grapple 4 launch), f32 length, f32 a[3], f32 b[3]
+  u32 links; per link: u16 from, u16 to, u8 kind (0 walk 1 jump 2 drop 3 grapple 4 launch 5 ladder), f32 length, f32 a[3], f32 b[3]
 Zone names are z<index> (stock maps have no zone volumes, so no names or tags of their own).
 The data is derived from the player's own install (collision outlines), no game files are copied into the DLL.
 
@@ -28,7 +28,7 @@ The data is derived from the player's own install (collision outlines), no game 
 import argparse, glob, json, os, struct, subprocess, sys, tempfile, zlib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-KINDS = {"walk": 0, "jump": 1, "drop": 2, "grapple": 3, "launch": 4}
+KINDS = {"walk": 0, "jump": 1, "drop": 2, "grapple": 3, "launch": 4, "ladder": 5}
 
 
 def pack(nz):
@@ -53,6 +53,12 @@ def build(nn, game, library, work):
     folder = os.path.join(work, "map" + nn)
     subprocess.run([sys.executable, os.path.join(HERE, "lp2project.py"), "import-lp2", nn, folder, "--name", "stock " + nn,
                     "--game", game, "--library", library], check=True, stdout=subprocess.DEVNULL)
+    pj = os.path.join(folder, "project.json")
+    p = json.load(open(pj))
+    p["nav_settings"] = dict(p.get("nav_settings") or {}, weld=STOCK_WELD)
+    p["volumes"] = [v for v in p.get("volumes", []) if not v.get("stock_limits")] + [
+        {"pos": list(pos), "size": list(size), "yaw": 0.0, "limits": True, "stock_limits": True} for pos, size in STOCK_LIMITS.get(nn, ())]
+    json.dump(p, open(pj, "w"), indent=1)
     prev = os.path.join(folder, ".preview")
     os.makedirs(prev, exist_ok=True)
     link = os.path.join(prev, "stage")
@@ -66,6 +72,12 @@ def build(nn, game, library, work):
     return json.load(open(os.path.join(prev, "navzones.json")))
 
 
+STOCK_WELD = 60.0   # cm: auto welds (lp2navgen.auto_welds) on stock maps: Recast splits their floors at every step (map 06:
+                    # the main piece 944 -> 2019 of 2246 polygons with them; bots stood with no path between pieces)
+STOCK_LIMITS = {   # map limits volumes (floor centre, size; cm) the bots' navmesh is cut to, marked out by the user 2026-11-13
+    "07": [((-21525, -3230, 2788), (19210, 8510, 28150))],   # NEOS: low gravity + jump packs; the rest (ships) bots can't do
+    "15": [((-120, 389 - 3435, 15855), (26910, 6870, 33030))],   # Frozen Wasteland: the central crater (the y given, 389,
+}                                                             # is the box's middle: as the floor it cut half the crater)
 TRAINING = {"01": "41", "09": "46", "10": "31", "12": "26"}   # online map -> training area on the same stage (navmesh extents)
 
 
@@ -129,6 +141,7 @@ def main():
     ap.add_argument("--work", help="work folder (default: a temporary one)")
     ap.add_argument("--area", help="also write the navmesh blob (src/mods/stockarea.bin)")
     ap.add_argument("--reuse", action="store_true", help="use the work folder's maps as they are (no rebuild)")
+    ap.add_argument("--rebuild", default="", help="with --reuse: these maps (comma list, e.g. 07,15) are rebuilt anyway")
     ap.add_argument("out")
     ap.add_argument("maps", nargs="*")
     a = ap.parse_args()
@@ -138,9 +151,11 @@ def main():
     work = a.work or tmp.name
     os.makedirs(work, exist_ok=True)
     rows, total = [], 0
+    redo = {"%02d" % int(m) for m in a.rebuild.split(",") if m.strip()}
     for nn in maps:
         nzp = os.path.join(work, "map" + nn, ".preview", "navzones.json")
-        raw = pack(json.load(open(nzp)) if a.reuse and os.path.exists(nzp) else build(nn, a.game, a.library, work))
+        reuse = a.reuse and nn not in redo and os.path.exists(nzp)
+        raw = pack(json.load(open(nzp)) if reuse else build(nn, a.game, a.library, work))
         c = zlib.compressobj(9, zlib.DEFLATED, -15)
         z = c.compress(raw) + c.flush()
         total += len(z)
