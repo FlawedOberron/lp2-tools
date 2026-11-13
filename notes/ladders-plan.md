@@ -56,7 +56,7 @@ first. Not all are floor spots (some AI points float), so these are places to lo
   42-64 m: 1837 m2 @(-124,42,-2), 1119 m2 @(-70,44,-117), 722 m2 @(43,50,45) (hills or reachable?).
 - Fine: 00 (18), 02 (2), 08 (4), 09 (8).
 - 10, 12: Capcom's training navmesh (not generated).
-Scripts: navgen/stock_mapreport.py WORK (pieces / dropped chunks), navgen/stock_offmarks.py WORK mapNN... (markers), both read
+Scripts: stock_mapreport.py WORK (pieces / dropped chunks), stock_offmarks.py WORK mapNN... (markers), both read
 <work>/mapNN/.preview/navmesh.bin.
 - User 2026-11-13: map limits for stock bots (lp2stocknav STOCK_LIMITS, limits volumes added at import):
   07 NEOS: floor centre (-21525,-3230,2788), size (19210,8510,28150). Low gravity + jump packs, so the map hangs
