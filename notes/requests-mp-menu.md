@@ -201,6 +201,30 @@ uIdBattle / SprLayout ranking00) -> lives left / ELIMINATED red, FFA first; 2 te
 - **Grapple in the air** match rule. RE: find the gate that refuses to fire the anchor while airborne (cPlayer
   mAnchorStatus / uWp00 vf41 checks FUN_00c76a10, FUN_00f7f420, FUN_00f7f740(this, 3), FUN_00c77220), and test the
   animation states it lands in.
+  - Static RE 2026-11-14 (DX11 dump, gate still NOT found):
+    - Player pad -> think requests: cThinkPlayer::vf102 (0x939180) reads the pad object (+0x3b8 held, +0x3c0 pressed,
+      +0x3c8) into think +0x148 bits: 1, 2 (pad 0x200 + grenades), 4 (pad 0x2, with a camera-yaw direction),
+      8 (pad bit 4: +0x3b8 while think +0x98 is 2/6, else +0x3c8), 0x10 (pad 0x20), 0x40. Bit 8 is the likely anchor
+      request; its consumer outside the hanging state is not found (it is read as a byte, `*(byte *)(param_2 + 0x52)`
+      on an int*, so grep for that form).
+    - Think state byte +0x9c, sub-state +0x98, dispatched in cThinkHuman::vf5 (0x924460, `switch(state - 8)`).
+      0x1c = anchored / hanging: entered by FUN_00920880 (= cThinkPlayer::vf89; motion 0x25) from vf5 case 0x18 and
+      from FUN_00928780 / FUN_00928960 (picked in FUN_00929ef0 by char +0xd7c bit 29) once the anchor weapon's
+      +0xcc0 has 0x800000 (hooked). Inside 0x1c sub 2, request bits 1/2/4/8/0x10/0x40 pick motions 0xc/0xe/0x27/10/0x2c/0x33.
+      0x18 is entered by FUN_00920820 (= cThinkPlayer::vf130; motion (1,10)), called from FUN_00929580 (taken in
+      FUN_00929ef0 when FUN_008f90b0: char +0x2184 obj byte 5 & 2; may be cover, not the fire).
+    - Anchor weapon = FUN_009b6060(char); uWp00 +0x22f0 is a state char, +0x2250 == 4 checked in vf5.
+    - Bot pad: think +0x1c8 bit 4 (AI thinks' getter FUN_00962720), a different word from the player's +0x148.
+    - Next: runtime log instead of more static reading. Hook FUN_00920820 / FUN_00920880 and log think +0x9c/+0x98/+0x148
+      and char +0xd7c / cJump Rno (+0x17c0) each frame the anchor button is down, once on the ground and once mid-jump;
+      the state where the ground press goes somewhere and the air press doesn't is the gate.
+  - FOUND 2026-11-14 (probe run, DX9 Steam): free-move handler runs in the air too; a ground press sets char +0xcc0
+    (DX9 +0xcb0) bit 0x400000 the next frame, an air press never does. Gate: FUN_00928de0 (DX11) asks for the anchor
+    with FUN_00923af0(think, char, 6, 0) only if char vf119 (Rno==2 rising) / vf120 (Rno==3 falling) / vf122 (+0x17ec)
+    are false. Anchor request = char +0x1643 bit 6 (weapon slot 6, +0x16a0) via FUN_00900910; uHuman::vf499 launches it.
+    Air Grapple rule (extras "airGrapple", "agr=", Anchor page) patches the vf119/vf120 calls (rules.cpp AirGrappleInstall,
+    sites DX11 0x929335 / DX9 0x9199a5 / 1.1 0x9295f5 / 0x919ba5). Untested in game; FUN_00923af0 also needs
+    (char +0x370 & 0x10000000) || (+0xd80 bit 22), unknown in the air. Solo system link: g_localIndex stays -1.
 - **Settings 4** page in Create Match: Settings 3 has room for only 3 more rows (before PCCROSS). A 4th page = a new
   Flash sub page + row table entry (the pages are Flash sub1 / sub2 under the main page; see RE progress 2).
 - **Bigger stored game settings** (saving / loading match settings): our rules live in the free rules bytes

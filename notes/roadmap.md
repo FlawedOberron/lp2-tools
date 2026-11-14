@@ -5,10 +5,10 @@ points at its detailed notes. Older long-term lists stay where they are (map-edi
 later-2026-11-03.md ROADMAP items, mode-scripting-plan.md, bot-match-plan.md).
 
 ## This week (from 2026-11-09)
-1. **Character importer: pose bones before rigging.** Let the user pose / adjust bones to match the model when it
+1. **BUILT (Pose mode, lp2-charedit 31b42da; repo public 2026-11-14: FlawedOberron/lp2-charedit). Character importer: pose bones before rigging.** Let the user pose / adjust bones to match the model when it
    isn't in the exact rest pose, then rig. Godot app ~/Projects/lp2-charedit (importer.gd, export.py); still
    untested in game.
-2. **Stagger settings: fix + split.** Fall, melee, hit (bullet), grapple (anchor) and explosion, each with
+2. **DONE (user confirmed tested 2026-11-14). Stagger settings: fix + split.** Fall, melee, hit (bullet), grapple (anchor) and explosion, each with
    reduce AND increase options (anchor hit sending players flying). Later: melee ragdolling people off the map.
    State 2026-11-09: split built (xlive "Stagger split" commit, untested in game): Bullet Stagger (the old Hit
    Stagger row, rule byte 0x36) + Explosion / Anchor / Melee Stagger rows (extras), values Default / Reduced / Low /
@@ -28,7 +28,7 @@ later-2026-11-03.md ROADMAP items, mode-scripting-plan.md, bot-match-plan.md).
    pack" (8-bone skin type 5/8 second VB undecoded, black heads, joint map LP1 -> LP2).
 7. **Post maps and parts on ModDB** so active modding is visible (lp2-mapedit release repo for the editor; pick
    finished maps / part packs, screenshots, short descriptions).
-8. **Bots: less dumb.** Open: grapple aim (anchor fired but didn't climb), jump links, data posts blocking sight,
+8. **Bots: less dumb.** 2026-11-14 (user): much more competent now; seen using ladders. Open: grapple aim (anchor fired but didn't climb), jump links, data posts blocking sight,
    handgun swaps, bot driving later. Notes: bot-match-plan.md (Link crossing, Data posts, Weapon pickups).
 9. **Vehicle locational damage** (experiment, if there's time): hits to wheels / legs / engine / turret parts
    doing different things. Lead: uVitalSuit mWeakHitParts / mWeakHitRemainTimer / VsWeakDamageTurnAngle (the game
@@ -49,6 +49,10 @@ later-2026-11-03.md ROADMAP items, mode-scripting-plan.md, bot-match-plan.md).
 - Spawning options (Instant Random / Safe / Unsafe, Near Allies, Zones Set / Dynamic, Spawn Distance, Data Posts) +
   setup menu Begin Match pinned to the panel bottom with dividers: BUILT and installed 2026-11-12, untested, uncommitted.
   See spawning-plan.md.
+
+## 2026-11-14
+- Air Grapple rule (Off / Unlimited / Max 1-5) released test-2026-11-14; anchor look mid-air OK (user). Max limits untested.
+- Solo system link: g_localIndex stays -1 (rules.cpp ControlUpdate), so slot-based local-player features may miss.
 
 ## Carried over (open, from the last sessions)
 - Black screen + hang at the title screen after the PC resumed (2026-11-09 12:28): all threads waiting on a lock,
