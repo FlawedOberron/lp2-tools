@@ -175,4 +175,9 @@ Spawn Distance from where you died (Any / Near / Medium / Far). Sub-options hidd
   +0x28 (warning) are "xor eax,eax; ret" stubs: a copied vtable routes them to our log ("game net ..."; 10 lines/s,
   repeats dropped). Strings to look for: "Upstream disconnected", "no receive timeout", "leaveSession timeouted",
   "setNetworkConnectionEvent ... error", "relay auth error".
+- 2026-11-15 19:55:55 System Link bot match: "Connection Lost" again, ~0.1 s after two bots respawned. game net log: no
+  warning / timeout before it; "NetworkConnectionStable[0] close-leave" (DX11 0x452b50 / DX9 0x452b10, vtable 0x16dcda8
+  slot 8) then XSessionDelete. The connection is the loopback (1min send 6490 = recv 6490): the game leaves itself.
+  gamelog.cpp now logs code addresses up the stack at close-leave ("game net: the game closes a connection"): next
+  time, look those up in lp2-decomp to find who asked. Installed 2026-11-15 ~20:00.
 - Fraction points from bot matches: career.cpp, built + installed 22:04, untested (log "+N Fraction points").

@@ -224,3 +224,14 @@ addresses via sigport.py for DX9 / 1.1.
 - 2026-11-09 (later, untested): stagger reactions now Default/Off/Occasional/Flinch/Knockdown/Knockdown Pull/Knockdown Push/Stun; Massive Shot Default/Off/Knockdown/Pull/Push/Stun (saved Stun values from earlier today now read as Pull). The push row became Knockdown Force (Light/Medium/Heavy/Launch, same key knockdownPush). The game's own knockdowns (Default) get no throw now. Attacker = vf151 arg 3, followed to the owner (+0x24) when it's a shot (type 4), as vf151 does; the first push test's grapple pushes went toward the attacker, probably because the anchor shot's position was used.
 - Bullet Off flinch: the hit handler sets +0xd7c bit 8 (DX9 +0xd6c) on every hit. cThinkPlVsCF::vf14 (DX11 0x951f00) turns it into the flinch the next frame (hit probe: the bit is gone 15 ms later). With Off, or Occasional while waiting, the HitHandler hook clears it after the original.
 - Fall kill credit: the death think (DX11 0x912590, DX9 0x902bc0, 1.1 0x912800 / 0x902de0; thiscall(think, character, hit)). With hit == null it takes the killer from character +0x167c (DX9 +0x166c), the burn attacker slot, when +1 is set; the burn tick sets that. Our hook fills it from the last hit by another player's soldier within 5 s (g_lastHit, recorded in HitHandler). Side effect: the death ragdoll direction (FUN_00c6da70) reads +1 too. It only applies on the machine where the hit ran and the death think runs (untested online).
+
+## Ctrl shortcut menu: Change Match Settings -> our panel (built 2026-11-14, untested)
+- The stock "Change Match Settings" (MsgMenu 0x1db, "Change the settings for the next match") is entry 2 of the Ctrl
+  shortcut menu (uIdShortCutIcon::vf6 DX11 0xf3db70, also FUN_00f3d4c0). Its opener FUN_00f3cec0 (fastcall(menu), entry
+  on = +0x1bc bit 2) opens uIdCutIn window 0x28 (FUN_00ef7dc0: mode / map / rules select window; 0x29 in a Battle
+  Series). Entry 1 (FUN_00f3ce40) = window 0x27, Vote on Match Settings. Openers: DX11 0xf3cec0, DX9 0xf2d160, 1.1
+  0xf3d2f0 / 0xf2d1f0.
+- rules.cpp ShortcutSettings: host in the lobby -> g_lobbyPanelWant (LobbyPanelTick opens the F1 panel) and returns 0
+  (as a disabled entry); elsewhere the stock window. Logs which path. Air Grapple row added to the panel.
+- Old note was wrong: aBattlePlayerMatch / uIdBattlePlayerMatch is the Player Match menu (Find / Create), not settings.
+- Next (user 2026-11-14): change character parts between matches (the same Ctrl menu's customisation entry).

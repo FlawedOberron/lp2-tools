@@ -529,11 +529,15 @@ def zones_and_links(v, poly, keep, verts, tris, p, grapple_scan=GRAPPLE_SCAN, we
 REMOVE_UP = 200.0   # cm: a brushed point removes polygons whose middle is within this above or below it
 
 
-def marked(v, poly, among, items, what):
+SKIPPED = []   # remove marks skipped (their piece holds markers): reported in @result
+
+def marked(v, poly, among, items, what, protect=()):
     """the polygons project.json "nav_removed" / "nav_added" items pick among those in `among` (bool per polygon):
     {"brush": [[x, y, z], ...], "r": cm}: middles within r across and REMOVE_UP up / down of a point; then
     {"piece": [x, y, z]}: the whole piece there, of what's left among them, over shared edges only (so a piece welded to
-    the main floor goes alone, as the editor shows it) -> bool per polygon"""
+    the main floor goes alone, as the editor shows it), except a piece one of the `protect` polygons (the layout's
+    markers: spawns, pickups...) is in: a stale mark whose own piece has joined the main floor (hand edits, Clean up) or
+    is gone would take the floor with it -> bool per polygon"""
     out = np.zeros(len(poly), bool)
     if not isinstance(items, list) or not items:
         return out
@@ -554,7 +558,14 @@ def marked(v, poly, among, items, what):
             cand = np.flatnonzero(left)
             k = lp2navgen.poly_at(v, poly[cand], it["piece"]) if len(cand) else -1
             i = int(cand[k]) if k >= 0 else -1
-            if i >= 0 and piece[i] >= 0:
+            held = [j for j in protect if piece[j] >= 0 and piece[j] == piece[i]] if i >= 0 and piece[i] >= 0 else []
+            if held:
+                SKIPPED.append(it["piece"])
+                n_p = int((piece == piece[i]).sum())
+                print(f"WARNING: {what} piece at {it['piece']}: skipped, that piece ({n_p} polygons) has {len(held)} of "
+                      f"the layout's markers (spawns, pickups...) on it - the piece the mark was for has joined it or is "
+                      f"gone (remove what's left with Remove brush / Hand edit)")
+            elif i >= 0 and piece[i] >= 0:
                 out |= piece == piece[i]
             else:
                 print(f"{what} piece at {it['piece']}: no navmesh there now")
@@ -564,9 +575,9 @@ def marked(v, poly, among, items, what):
     return out
 
 
-def removed(v, poly, keep, welds, items):
-    """project.json "nav_removed": what's taken out of the kept polygons (marked)"""
-    return marked(v, poly, keep, items, "removed")
+def removed(v, poly, keep, welds, items, protect=()):
+    """project.json "nav_removed": what's taken out of the kept polygons (marked; not a piece with markers on it)"""
+    return marked(v, poly, keep, items, "removed", protect)
 
 def read_obj(path):
     """the editor's hand-edited navmesh (project.json "nav_mesh"): an OBJ in metres, Y up -> v (n, 3) cm, p (m, 3)
@@ -648,7 +659,7 @@ def main():
     print(f"playable area: {int(keep.sum())} of {len(poly)} polygons ({len(set(reg[seeds].tolist()))} regions from "
           f"{len(seeds)} of {len(pts)} markers)")
     keep |= marked(v, poly, ~keep, p.get("nav_added"), "added back")   # left-out parts put back by hand
-    keep &= ~removed(v, poly, keep, welds, p.get("nav_removed"))
+    keep &= ~removed(v, poly, keep, welds, p.get("nav_removed"), [int(i) for i in seeds])
     prev = os.path.join(folder, ".preview")
     os.makedirs(prev, exist_ok=True)
     piece = lp2navgen.pieces(poly, welds, keep)
@@ -685,7 +696,7 @@ def main():
                           welds=kwelds, ladder=ladder[keep])
     rel = lambda f: os.path.relpath(f, folder).replace(os.sep, "/")
     res = dict(lnv=rel(lnv), way=rel(os.path.join(os.path.dirname(lnv), "Way_%s.rAIWayPoint" % tag)),
-               polygons=int(keep.sum()), dropped=int((~keep).sum()), zones=len(nz["zones"]), links=len(nz["links"]),
+               polygons=int(keep.sum()), dropped=int((~keep).sum()), skipped_marks=len(SKIPPED), zones=len(nz["zones"]), links=len(nz["links"]),
                pieces=npieces, piece_sizes=sizes[:20].tolist(), welds=len(kwelds),
                welds_manual=sum(1 for w in kwelds if w[6]),
                # the hand marks this build applied: the editor previews only ones added since (applied ones are in keep)

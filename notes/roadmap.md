@@ -54,6 +54,18 @@ later-2026-11-03.md ROADMAP items, mode-scripting-plan.md, bot-match-plan.md).
 - Air Grapple rule (Off / Unlimited / Max 1-5) released test-2026-11-14; anchor look mid-air OK (user). Max limits untested.
 - Solo system link: g_localIndex stays -1 (rules.cpp ControlUpdate), so slot-based local-player features may miss.
 
+## Requested 2026-11-15
+- **Grappling options in the Campaign** (user idea): grapple range, Air Grapple, maybe anchor speed, as Campaign
+  settings. Today the VS rules are deliberately stock there: rules.cpp SyncThread sets Rules() for RICH_MODE 0/1/5
+  (SINGLE / COOP / CAMPAIGN) and InTraining(); anchor speed and fall threshold also check game[0x256] (versus).
+  Would need its own settings (Options screen or a Campaign panel), and in online co-op the host's values sent to
+  everyone like the VS rules (MemberDataSet "rules").
+- Campaign check 2026-11-15: grapple range and stagger are stock in the Campaign (log: "x 1.00", "the game's ...").
+  Bot code leaked there through one hook: HmAction (pickup swap + dodge direction) only checked Improved, so Campaign
+  partners/enemies got bot personalities and changed dodges. Gated on BotWorld like the other bot hooks (built +
+  installed 2026-11-15, untested, uncommitted). Note: BotWorld counts area category 0 (AI Enemy Battle areas), so
+  Advanced Training 1-4's AI may still get the Improved bot hooks (log shows personalities there); not reported as a problem.
+
 ## Carried over (open, from the last sessions)
 - Black screen + hang at the title screen after the PC resumed (2026-11-09 12:28): all threads waiting on a lock,
   log stopped at the title; overlay hooked normally. If it repeats: test with ModCache\no-ui.txt.
